@@ -10,7 +10,6 @@ import           Control.Monad            (when)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
-import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text.Encoding       as TE
 import           Network.MQTT.Client
@@ -26,6 +25,7 @@ import           System.Log.Logger        (Priority (INFO), infoM,
                                            rootLoggerName, setLevel,
                                            updateGlobalLogger)
 
+import Bridge
 import           BridgeConf
 
 
@@ -78,13 +78,11 @@ copyMsg mcs dm n _ PublishRequest{..} = do
                                       " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
       pubAliased mc topic _pubBody _pubRetain _pubQoS _pubProps
 
-destTopics :: [Dest] -> [Topic]
-destTopics = Set.toList . Set.fromList . map (\(Dest t _) -> t)
-
 -- Do all the bridging.
 run :: Options -> IO ()
 run Options{..} = do
-  (BridgeConf conns sinks) <- parseConfFile optConfFile
+  fullConf@(BridgeConf conns sinks) <- parseConfFile optConfFile
+  validateConfig fullConf
   let dests = Map.fromList $ map (\(Sink n d) -> (n,d)) sinks
   cmtv <- newTVarIO mempty
   mcs <- Map.fromList <$> mapConcurrently (connect cmtv dests) conns
