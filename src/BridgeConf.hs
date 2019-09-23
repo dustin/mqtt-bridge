@@ -2,18 +2,15 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, BridgeConf(..), Server(..), Sink(..), Conn(..), Dest(..)
+  parseConfFile, BridgeConf(..), Server, Sink(..), Conn(..), Dest(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
-import qualified Data.ByteString.Lazy       as BL
-import qualified Data.ByteString.Lazy.UTF8  as BU
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
-import           Data.Text                  (Text, pack, unpack)
+import           Data.Text                  (Text, pack)
 import           Data.Void                  (Void)
-import           Text.Megaparsec            (Parsec, between, eof, noneOf,
-                                             option, parse, sepBy, some, try)
+import           Text.Megaparsec            (Parsec, between, eof, noneOf, parse, some)
 import           Text.Megaparsec.Char       (alphaNumChar, space, space1)
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Error      (errorBundlePretty)
@@ -37,10 +34,6 @@ parseBridgeConf = do
   conns <- some (parseConn <* space)
   sinks <- some parseSink <* eof
   pure $ BridgeConf conns sinks
-
--- Eat whitspace around a parser.
-spacey :: Parser a -> Parser a
-spacey f = space *> f <* space
 
 word :: Parser Text
 word = pack <$> some alphaNumChar

@@ -4,7 +4,7 @@
 module Main where
 
 import           Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
-import           Control.Concurrent.STM   (STM, TVar, atomically, newTVarIO,
+import           Control.Concurrent.STM   (TVar, atomically, newTVarIO,
                                            readTVar, retry, writeTVar)
 import           Control.Monad            (when)
 import qualified Data.ByteString.Lazy     as BL
@@ -18,7 +18,7 @@ import           Network.MQTT.Types       (PublishRequest (..),
                                            RetainHandling (..))
 import           Network.URI
 import           Options.Applicative      (Parser, execParser, fullDesc, help,
-                                           helper, info, long, option, progDesc,
+                                           helper, info, long, progDesc,
                                            showDefault, strOption, value,
                                            (<**>))
 import           System.Log.Logger        (Priority (INFO), infoM,
@@ -71,8 +71,8 @@ copyMsg mcs dm n _ PublishRequest{..} = do
 
   where
     topic = (TE.decodeUtf8 . BL.toStrict) _pubTopic
-    deliver mcs d = do
-      let mc = mcs Map.! d
+    deliver mcs' d = do
+      let mc = mcs' Map.! d
       infoM rootLoggerName $ mconcat ["Delivering ", show topic,
                                       " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
       pubAliased mc topic _pubBody _pubRetain _pubQoS _pubProps
