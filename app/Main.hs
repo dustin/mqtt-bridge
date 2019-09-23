@@ -100,7 +100,7 @@ run Options{..} = do
 
     connect :: TVar (Map Server MQTTClient) -> Map Server [Dest] -> Conn -> IO (Server, MQTTClient)
     connect cm dm (Conn n u o) = do
-      infoM rootLoggerName $ mconcat ["Connecting to ", show u, " with ", show o]
+      infoM rootLoggerName $ mconcat ["Connecting to ", show u, " with ", show (Map.toList o)]
       mc <- connectMQTT u o (copyMsg cm dm n)
       props <- svrProps mc
       infoM rootLoggerName $ mconcat ["Connected to ", show u, " - server properties: ", show props]
