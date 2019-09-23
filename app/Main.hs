@@ -10,6 +10,7 @@ import           Control.Monad            (when)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
+import           Data.Text                (Text)
 import qualified Data.Text.Encoding       as TE
 import           Network.MQTT.Client
 import           Network.MQTT.Topic       (match)
@@ -35,13 +36,15 @@ options :: Parser Options
 options = Options
   <$> strOption (long "conf" <> showDefault <> value "bridge.conf" <> help "config file")
 
-connectMQTT :: URI -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
-connectMQTT uri f = connectURI mqttConfig{_connID=cid (uriFragment uri),
+connectMQTT :: URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
+connectMQTT uri opts f = connectURI mqttConfig{_connID=cid (uriFragment uri),
                                            _cleanSession=False,
                                            _protocol=Protocol50,
                                            _msgCB=LowLevelCallback f,
-                                           _connProps=[PropSessionExpiryInterval 900,
-                                                       PropTopicAliasMaximum 500,
+                                           _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 900,
+                                                       PropTopicAliasMaximum $ opt "topic-alias-maximum" 2048,
+                                                       PropMaximumPacketSize $ opt "maximum-packet-size" 65536,
+                                                       PropReceiveMaximum $ opt "receive-maximum" 256,
                                                        PropRequestResponseInformation 1,
                                                        PropRequestProblemInformation 1]
                                            }
@@ -51,6 +54,8 @@ connectMQTT uri f = connectURI mqttConfig{_connID=cid (uriFragment uri),
     cid ['#']    = "mqttbridge"
     cid ('#':xs) = xs
     cid _        = "mqttbridge"
+
+    opt t d = toEnum $ Map.findWithDefault d t opts
 
 
 -- MQTT message callback that will look up a destination and deliver a message to it.
@@ -94,9 +99,9 @@ run Options{..} = do
       infoM rootLoggerName $ mconcat ["Sub response from ", show n, ": ", show subrv]
 
     connect :: TVar (Map Server MQTTClient) -> Map Server [Dest] -> Conn -> IO (Server, MQTTClient)
-    connect cm dm (Conn n u) = do
-      infoM rootLoggerName $ mconcat ["Connecting to ", show u]
-      mc <- connectMQTT u (copyMsg cm dm n)
+    connect cm dm (Conn n u o) = do
+      infoM rootLoggerName $ mconcat ["Connecting to ", show u, " with ", show o]
+      mc <- connectMQTT u o (copyMsg cm dm n)
       props <- svrProps mc
       infoM rootLoggerName $ mconcat ["Connected to ", show u, " - server properties: ", show props]
       pure (n, mc)

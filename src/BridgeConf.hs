@@ -26,7 +26,7 @@ data BridgeConf = BridgeConf [Conn] [Sink] deriving(Show)
 
 type Server = Text
 
-data Conn = Conn Server URI deriving(Show)
+data Conn = Conn Server URI (Map Text Int) deriving(Show)
 
 data Sink = Sink Server [Dest] deriving(Show)
 
@@ -47,10 +47,21 @@ word = pack <$> some alphaNumChar
 
 parseConn :: Parser Conn
 parseConn = do
-  n <- "conn" *> space *> word
-  ustr <- space *>  some (noneOf ['\n', ' '])
-  let (Just u) = parseURI ustr
-  pure $ Conn n u
+  ((n, url), opts) <- itemList src stuff
+  pure $ Conn n url (Map.fromList opts)
+
+  where
+    src = do
+      _ <- "conn" *> space
+      w <- word
+      ustr <- space *>  some (noneOf ['\n', ' '])
+      let (Just u) = parseURI ustr
+      pure (w, u)
+
+    stuff = do
+      k <- pack <$> (space *> some (noneOf ['\n', ' ', '=']))
+      v <- space *> "=" *> space *> L.decimal
+      pure (k,v)
 
 parseSink :: Parser Sink
 parseSink = do
