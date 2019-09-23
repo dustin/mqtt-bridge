@@ -10,7 +10,8 @@ import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack)
 import           Data.Void                  (Void)
-import           Text.Megaparsec            (Parsec, between, eof, noneOf, parse, some)
+import           Text.Megaparsec            (Parsec, between, eof, noneOf,
+                                             parse, some)
 import           Text.Megaparsec.Char       (alphaNumChar, space, space1)
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Error      (errorBundlePretty)
@@ -62,16 +63,12 @@ parseSink = do
   pure $ Sink n ss
 
     where
-      src = do
-        _ <- "from" *> space
-        w <- word
-        pure w
+      src = "from" *> space *> word
 
       stuff = do
         t <- "sync" *> space *> qstr
         _ <- space <* "->" <* space
-        d <- word
-        pure $ Dest (pack t) d
+        Dest (pack t) <$> word
 
       qstr = between "\"" "\"" (some $ noneOf ['"'])
              <|> between "'" "'" (some $ noneOf ['\''])
