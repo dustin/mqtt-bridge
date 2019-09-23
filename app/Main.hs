@@ -10,6 +10,7 @@ import           Control.Monad            (when)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
+import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text.Encoding       as TE
 import           Network.MQTT.Client
@@ -77,6 +78,9 @@ copyMsg mcs dm n _ PublishRequest{..} = do
                                       " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
       pubAliased mc topic _pubBody _pubRetain _pubQoS _pubProps
 
+destTopics :: [Dest] -> [Topic]
+destTopics = Set.toList . Set.fromList . map (\(Dest t _) -> t)
+
 -- Do all the bridging.
 run :: Options -> IO ()
 run Options{..} = do
@@ -95,7 +99,7 @@ run Options{..} = do
       subrv <- subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
                                                     _noLocal=True,
                                                     _retainHandling=SendOnSubscribeNew,
-                                                    _retainAsPublished=True}) | (Dest t _) <- dests] mempty
+                                                    _retainAsPublished=True}) | t <- destTopics dests] mempty
       infoM rootLoggerName $ mconcat ["Sub response from ", show n, ": ", show subrv]
 
     connect :: TVar (Map Server MQTTClient) -> Map Server [Dest] -> Conn -> IO (Server, MQTTClient)
