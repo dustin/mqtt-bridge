@@ -97,6 +97,8 @@ run Options{..} = do
     connect cm dm (Conn n u) = do
       infoM rootLoggerName $ mconcat ["Connecting to ", show u]
       mc <- connectMQTT u (copyMsg cm dm n)
+      props <- svrProps mc
+      infoM rootLoggerName $ mconcat ["Connected to ", show u, " - server properties: ", show props]
       pure (n, mc)
 
 main :: IO ()
