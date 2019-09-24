@@ -25,7 +25,7 @@ import           System.Log.Logger        (Priority (INFO), infoM,
                                            rootLoggerName, setLevel,
                                            updateGlobalLogger)
 
-import Bridge
+import           Bridge
 import           BridgeConf
 
 
@@ -38,11 +38,11 @@ options = Options
   <$> strOption (long "conf" <> showDefault <> value "bridge.conf" <> help "config file")
 
 connectMQTT :: URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
-connectMQTT uri opts f = connectURI mqttConfig{_connID=cid (uriFragment uri),
-                                           _cleanSession=False,
-                                           _protocol=Protocol50,
+connectMQTT uri opts f = connectURI mqttConfig{_connID=cid protocol (uriFragment uri),
+                                           _cleanSession=opt "session-expiry-interval" 0 == (0::Int),
+                                           _protocol=protocol,
                                            _msgCB=LowLevelCallback f,
-                                           _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 900,
+                                           _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 0,
                                                        PropTopicAliasMaximum $ opt "topic-alias-maximum" 2048,
                                                        PropMaximumPacketSize $ opt "maximum-packet-size" 65536,
                                                        PropReceiveMaximum $ opt "receive-maximum" 256,
@@ -52,9 +52,14 @@ connectMQTT uri opts f = connectURI mqttConfig{_connID=cid (uriFragment uri),
                     uri
 
   where
-    cid ['#']    = "mqttbridge"
-    cid ('#':xs) = xs
-    cid _        = "mqttbridge"
+    protocol = if (opt "protocol" 5) == (3::Int)
+               then Protocol311
+               else Protocol50
+
+    cid Protocol311 ['#'] = "mqttbridge"
+    cid _ ('#':xs)        = xs
+    cid Protocol311 _     = "mqttbridge"
+    cid Protocol50 _      = ""
 
     opt t d = toEnum $ Map.findWithDefault d t opts
 
