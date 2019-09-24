@@ -9,7 +9,7 @@ import           Network.MQTT.Topic (Topic)
 import           BridgeConf
 
 destTopics :: [Dest] -> [Topic]
-destTopics = Set.toList . Set.fromList . map (\(Dest t _) -> t)
+destTopics = Set.toList . Set.fromList . map (\(Dest t _ _) -> t)
 
 validateConfig :: Monad m => BridgeConf -> m ()
 validateConfig (BridgeConf conns sinks) = do
@@ -18,7 +18,7 @@ validateConfig (BridgeConf conns sinks) = do
       names = Set.fromList namel
       sinknames = Set.fromList $ map (\(Sink s _) -> s) sinks
       unknownsinks = sinknames `Set.difference` names
-      destnames = Set.fromList . concatMap (\(Sink _ dests) -> map (\(Dest _ s) -> s) dests) $ sinks
+      destnames = Set.fromList . concatMap (\(Sink _ dests) -> map (\(Dest _ s _) -> s) dests) $ sinks
       unknowndests = destnames `Set.difference` names
 
   when (isLeft dups) $ fail ("duplicate name in conns list: " <> show (fromLeft undefined dups))

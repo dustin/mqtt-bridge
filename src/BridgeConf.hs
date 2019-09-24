@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, BridgeConf(..), Server, Sink(..), Conn(..), Dest(..)
+  parseConfFile, BridgeConf(..), Server, Sink(..), Conn(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -11,7 +11,7 @@ import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack)
 import           Data.Void                  (Void)
 import           Text.Megaparsec            (Parsec, between, eof, noneOf,
-                                             parse, some)
+                                             option, parse, some, try)
 import           Text.Megaparsec.Char       (alphaNumChar, space, space1)
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Error      (errorBundlePretty)
@@ -28,7 +28,12 @@ data Conn = Conn Server URI (Map Text Int) deriving(Show)
 
 data Sink = Sink Server [Dest] deriving(Show)
 
-data Dest = Dest Text Server deriving(Show)
+data Dest = Dest Text Server TransFun deriving(Show)
+
+data TransFun = TransFun String (Text -> Text)
+
+instance Show TransFun where
+  show (TransFun n _) = n
 
 parseBridgeConf :: Parser BridgeConf
 parseBridgeConf = do
@@ -68,7 +73,13 @@ parseSink = do
       stuff = do
         t <- "sync" *> space *> qstr
         _ <- space <* "->" <* space
-        Dest (pack t) <$> word
+        w <- word
+        tf <- option (TransFun "id" id) (try parseTF)
+        pure $ Dest (pack t) w tf
+
+      parseTF = do
+        d <- space *> qstr
+        pure $ TransFun "rewrite" ((const . pack) d)
 
       qstr = between "\"" "\"" (some $ noneOf ['"'])
              <|> between "'" "'" (some $ noneOf ['\''])

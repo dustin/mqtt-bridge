@@ -72,16 +72,23 @@ copyMsg mcs dm n _ PublishRequest{..} = do
     when (null m) retry
     pure m
 
-  let dests = map (\(Dest _ s) ->s) $ filter (\(Dest t _) -> match t topic) (dm Map.! n)
+  let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) (dm Map.! n)
   mapM_ (deliver mcs') dests
 
   where
     topic = (TE.decodeUtf8 . BL.toStrict) _pubTopic
-    deliver mcs' d = do
+    deliver :: Map Server MQTTClient -> (Server, Text -> Text) -> IO ()
+    deliver mcs' (d,f) = do
       let mc = mcs' Map.! d
-      infoM rootLoggerName $ mconcat ["Delivering ", show topic,
+          dtopic = f topic
+      infoM rootLoggerName $ mconcat ["Delivering ", show topic, rewritten dtopic,
                                       " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
-      pubAliased mc topic _pubBody _pubRetain _pubQoS _pubProps
+      pubAliased mc dtopic _pubBody _pubRetain _pubQoS _pubProps
+
+        where
+          rewritten dtopic
+            | topic == dtopic = ""
+            | otherwise       = " as " <> show dtopic
 
 -- Do all the bridging.
 run :: Options -> IO ()
