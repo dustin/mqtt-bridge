@@ -16,12 +16,18 @@ validateConfig (BridgeConf conns sinks) = do
   let namel = map (\(Conn s _ _) -> s) conns
       dups = foldr findDup (Right mempty) namel
       names = Set.fromList namel
+      sinknames = Set.fromList $ map (\(Sink s _) -> s) sinks
+      unknownsinks = sinknames `Set.difference` names
       destnames = Set.fromList . concatMap (\(Sink _ dests) -> map (\(Dest _ s) -> s) dests) $ sinks
-      unknown = destnames `Set.difference` names
+      unknowndests = destnames `Set.difference` names
 
   when (isLeft dups) $ fail ("duplicate name in conns list: " <> show (fromLeft undefined dups))
 
-  when ((not.null) unknown) $ fail ("undefined server names found in destinations: " <> (show. Set.toList) unknown)
+  when ((not.null) unknownsinks) $ fail ("undefined server names found in sink declarations: "
+                                         <> (show. Set.toList) unknownsinks)
+
+  when ((not.null) unknowndests) $ fail ("undefined server names found in destinations: "
+                                         <> (show. Set.toList) unknowndests)
 
   pure ()
 
