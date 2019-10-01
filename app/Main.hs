@@ -3,10 +3,11 @@
 
 module Main where
 
-import           Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
+import           Control.Concurrent.Async (async, mapConcurrently,
+                                           mapConcurrently_, waitAnyCancel)
 import           Control.Concurrent.STM   (TVar, atomically, newTVarIO,
                                            readTVar, retry, writeTVar)
-import           Control.Monad            (when)
+import           Control.Monad            (void, when)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
@@ -90,6 +91,9 @@ copyMsg mcs dm n _ PublishRequest{..} = do
             | topic == dtopic = ""
             | otherwise       = " as " <> show dtopic
 
+raceABunch_ :: [IO a] -> IO ()
+raceABunch_ is = mapM async is >>= void.waitAnyCancel
+
 -- Do all the bridging.
 run :: Options -> IO ()
 run Options{..} = do
@@ -100,7 +104,7 @@ run Options{..} = do
   mcs <- Map.fromList <$> mapConcurrently (connect cmtv dests) conns
   atomically $ writeTVar cmtv mcs
   mapConcurrently_ (sub mcs) sinks
-  mapConcurrently_ waitForClient (Map.elems mcs)
+  raceABunch_ $ map waitForClient (Map.elems mcs)
 
   where
     sub :: Map Server MQTTClient -> Sink -> IO ()
