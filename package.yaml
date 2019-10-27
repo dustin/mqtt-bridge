@@ -33,6 +33,8 @@ dependencies:
 - utf8-string
 - containers
 - hslogger
+- ekg
+- ekg-core
 
 library:
   source-dirs: src
