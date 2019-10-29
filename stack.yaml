@@ -39,7 +39,7 @@ packages:
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
 extra-deps:
-- net-mqtt-0.6.1.0
+- net-mqtt-0.6.1.1
 - ekg-0.4.0.15
 - ekg-json-0.1.0.6
 
