@@ -22,10 +22,10 @@ import           Network.MQTT.Types       (PublishRequest (..),
 import           Network.URI
 import           Options.Applicative      (Parser, auto, execParser, fullDesc,
                                            help, helper, info, long, option,
-                                           progDesc, showDefault, strOption,
-                                           value, (<**>))
-import           System.Log.Logger        (Priority (INFO), infoM,
-                                           rootLoggerName, setLevel,
+                                           progDesc, short, showDefault,
+                                           strOption, switch, value, (<**>))
+import           System.Log.Logger        (Priority (DEBUG, INFO), debugM,
+                                           infoM, rootLoggerName, setLevel,
                                            updateGlobalLogger)
 import           System.Remote.Counter    (Counter, inc)
 import qualified System.Remote.Monitoring as RM
@@ -44,7 +44,8 @@ data Metrics = Metrics {
 data Options = Options {
   optConfFile :: String,
   optEKGAddr  :: BS.ByteString,
-  optEKGPort  :: Int
+  optEKGPort  :: Int,
+  optVerbose  :: Bool
   }
 
 options :: Parser Options
@@ -52,6 +53,7 @@ options = Options
   <$> strOption (long "conf" <> showDefault <> value "bridge.conf" <> help "config file")
   <*> strOption (long "ekgaddr" <> showDefault <> value "localhost" <> help "EKG listen address")
   <*> option auto (long "ekgport" <> showDefault <> value 8000 <> help "EKG listen port")
+  <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
 
 connectMQTT :: URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
 connectMQTT uri opts f = connectURI mqttConfig{_cleanSession=opt "session-expiry-interval" 0 == (0::Int),
@@ -92,7 +94,7 @@ copyMsg mcs dm n Metrics{..} _ PublishRequest{..} = do
     deliver mcs' (d,f) = do
       let mc = mcs' Map.! d
           dtopic = f topic
-      infoM rootLoggerName $ mconcat ["Delivering ", show topic, rewritten dtopic,
+      debugM rootLoggerName $ mconcat ["Delivering ", show topic, rewritten dtopic,
                                       " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
       inc (destCounters Map.! d)
       pubAliased mc dtopic _pubBody _pubRetain _pubQoS _pubProps
@@ -108,7 +110,7 @@ raceABunch_ is = mapM async is >>= void.waitAnyCancel
 -- Do all the bridging.
 run :: Options -> IO ()
 run Options{..} = do
-  updateGlobalLogger rootLoggerName (setLevel INFO)
+  updateGlobalLogger rootLoggerName (setLevel $ if optVerbose then DEBUG else INFO)
   -- Metrics
   metricServer <- RM.forkServer optEKGAddr optEKGPort
 
