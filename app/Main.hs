@@ -17,6 +17,7 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import           Data.Text                (Text)
 import qualified Data.Text.Encoding       as TE
+import           Data.Validation          (Validation (..))
 import           Network.MQTT.Client
 import           Network.MQTT.Topic       (match)
 import           Network.MQTT.Types       (PublishRequest (..),
@@ -122,8 +123,11 @@ run Options{..} = do
   -- Metrics
   metricServer <- RM.forkServer optEKGAddr optEKGPort
 
-  fullConf@(BridgeConf conns sinks) <- parseConfFile optConfFile
-  validateConfig fullConf
+  vc <- validateConfig <$> parseConfFile optConfFile
+  let fullConf@(BridgeConf conns sinks) = case vc of
+                                            Success c -> c
+                                            Failure f -> (error . show) f
+
   metrics <- makeMetrics metricServer fullConf
   let dests = Map.fromList $ map (\(Sink n d) -> (n,d)) sinks
   cmtv <- newTVarIO mempty
