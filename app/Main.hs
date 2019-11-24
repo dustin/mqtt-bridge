@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TupleSections     #-}
@@ -9,6 +10,7 @@ import           Control.Concurrent.Async (async, mapConcurrently,
 import           Control.Concurrent.STM   (TVar, atomically, newTVarIO,
                                            readTVar, retry, writeTVar)
 import           Control.Monad            (void, when)
+import           Control.Monad.IO.Class   (MonadIO (..))
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
@@ -55,6 +57,12 @@ options = Options
   <*> option auto (long "ekgport" <> showDefault <> value 8000 <> help "EKG listen port")
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
 
+logInfo :: MonadIO m => String -> m ()
+logInfo = liftIO . infoM rootLoggerName
+
+logDbg :: MonadIO m => String -> m ()
+logDbg = liftIO . debugM rootLoggerName
+
 connectMQTT :: URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
 connectMQTT uri opts f = connectURI mqttConfig{_cleanSession=opt "session-expiry-interval" 0 == (0::Int),
                                                _protocol=protocol,
@@ -94,8 +102,8 @@ copyMsg mcs dm n Metrics{..} _ PublishRequest{..} = do
     deliver mcs' (d,f) = do
       let mc = mcs' Map.! d
           dtopic = f topic
-      debugM rootLoggerName $ mconcat ["Delivering ", show topic, rewritten dtopic,
-                                      " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
+      logDbg $ mconcat ["Delivering ", show topic, rewritten dtopic,
+                        " (r=", show _pubRetain, ", props=", show _pubProps, ") to ", show d]
       inc (destCounters Map.! d)
       pubAliased mc dtopic _pubBody _pubRetain _pubQoS _pubProps
 
@@ -127,19 +135,19 @@ run Options{..} = do
   where
     sub :: Map Server MQTTClient -> Sink -> IO ()
     sub m (Sink n dests) = do
-      infoM rootLoggerName $  mconcat ["subscribing ", show dests, " at ", show n]
+      logInfo $ mconcat ["subscribing ", show dests, " at ", show n]
       subrv <- subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
                                                     _noLocal=True,
                                                     _retainHandling=SendOnSubscribeNew,
                                                     _retainAsPublished=True}) | t <- destTopics dests] mempty
-      infoM rootLoggerName $ mconcat ["Sub response from ", show n, ": ", show subrv]
+      logInfo $ mconcat ["Sub response from ", show n, ": ", show subrv]
 
     connect :: TVar (Map Server MQTTClient) -> Map Server [Dest] -> Metrics -> Conn -> IO (Server, MQTTClient)
     connect cm dm metrics (Conn n u o) = do
-      infoM rootLoggerName $ mconcat ["Connecting to ", show u, " with ", show (Map.toList o)]
+      logInfo $ mconcat ["Connecting to ", show u, " with ", show (Map.toList o)]
       mc <- connectMQTT u o (copyMsg cm dm n metrics)
       props <- svrProps mc
-      infoM rootLoggerName $ mconcat ["Connected to ", show u, " - server properties: ", show props]
+      logInfo $ mconcat ["Connected to ", show u, " - server properties: ", show props]
       pure (n, mc)
 
     makeMetrics :: RM.Server -> BridgeConf -> IO Metrics
