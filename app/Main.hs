@@ -137,7 +137,7 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
             | otherwise       = " as " <> lstr dtopic
 
 raceABunch_ :: (MonadUnliftIO m, MonadLogger m) => [m a] -> m ()
-raceABunch_ is = mapM async is >>= liftIO.void.waitAnyCancel
+raceABunch_ is = mapM async is >>= void.waitAnyCancel
 
 -- Do all the bridging.
 run :: Options -> IO ()
