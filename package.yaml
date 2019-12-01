@@ -32,9 +32,12 @@ dependencies:
 - network-uri
 - utf8-string
 - containers
-- hslogger
+- validation
 - ekg
 - ekg-core
+- monad-logger
+- unliftio
+- unliftio-core
 
 library:
   source-dirs: src
