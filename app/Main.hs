@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TupleSections     #-}
@@ -10,9 +11,10 @@ import           Control.Concurrent.STM   (TVar, atomically, newTVarIO,
 import           Control.Monad            (void, when)
 import           Control.Monad.IO.Class   (MonadIO (..))
 import           Control.Monad.IO.Unlift  (MonadUnliftIO, withRunInIO)
-import           Control.Monad.Logger     (LogLevel (..), MonadLogger,
+import           Control.Monad.Logger     (LogLevel (..), LoggingT, MonadLogger,
                                            filterLogger, logWithoutLoc,
                                            runStderrLoggingT)
+import           Control.Monad.Reader     (ReaderT (..), asks, runReaderT)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
@@ -37,6 +39,13 @@ import           UnliftIO.Async           (async, mapConcurrently,
 import           Bridge
 import           BridgeConf
 
+data Env = Env {
+  conns   :: TVar (Map Server MQTTClient),
+  dests   :: Map Server [Dest],
+  metrics :: Metrics
+  }
+
+type Bridge = ReaderT Env (LoggingT IO)
 
 type Counters = (Counter, Counter)
 
@@ -90,29 +99,37 @@ connectMQTT uri opts f = connectURI mqttConfig{_cleanSession=opt "session-expiry
 
     opt t d = toEnum $ Map.findWithDefault d t opts
 
-
--- MQTT message callback that will look up a destination and deliver a message to it.
-copyMsg :: (MonadIO m, MonadLogger m) => TVar (Map Server MQTTClient) -> Map Server [Dest] -> Server -> Metrics -> (m () -> IO ()) -> (MQTTClient -> PublishRequest -> IO ())
-copyMsg mcs dm n Metrics{..} unl _ PublishRequest{..} = do
-  mcs' <- atomically $ do
-    m <- readTVar mcs
+mcs :: Bridge (Map Server MQTTClient)
+mcs = do
+  c <- asks conns
+  liftIO . atomically $ do
+    m <- readTVar c
     when (null m) retry
     pure m
 
-  inc (srcCounters Map.! n)
+-- MQTT message callback that will look up a destination and deliver a message to it.
+copyMsg :: Server -> (Bridge () -> IO ()) -> (MQTTClient -> PublishRequest -> IO ())
+copyMsg n unl _ PublishRequest{..} = unl $ do
+  dm <- asks dests
+  Metrics{srcCounters} <- asks metrics
+
+  liftIO $ inc (srcCounters Map.! n)
   let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) (dm Map.! n)
-  unl $ mapM_ (deliver mcs') dests
+  mapM_ deliver dests
 
   where
     topic = (TE.decodeUtf8 . BL.toStrict) _pubTopic
-    deliver :: (MonadLogger m, MonadIO m) => Map Server MQTTClient -> (Server, Text -> Text) -> m ()
-    deliver mcs' (d,f) = do
+    deliver :: (Server, Text -> Text) -> Bridge ()
+    deliver (d,f) = do
+      mcs' <- mcs
       let mc = mcs' Map.! d
           dtopic = f topic
       logDbg $ mconcat ["Delivering ", lstr topic, rewritten dtopic,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]
-      liftIO $ inc (destCounters Map.! d)
-      liftIO $ pubAliased mc dtopic _pubBody _pubRetain _pubQoS _pubProps
+      Metrics{destCounters} <- asks metrics
+      liftIO $ do
+        inc (destCounters Map.! d)
+        pubAliased mc dtopic _pubBody _pubRetain _pubQoS _pubProps
 
         where
           rewritten dtopic
@@ -133,17 +150,19 @@ run Options{..} = runStderrLoggingT . logfilt $ do
                                             Success c -> c
                                             Failure f -> (error . show) f
 
-  metrics <- liftIO $ makeMetrics metricServer fullConf
-  let dests = Map.fromList $ map (\(Sink n d) -> (n,d)) sinks
+  mets <- liftIO $ makeMetrics metricServer fullConf
   cmtv <- liftIO $ newTVarIO mempty
-  mcs <- Map.fromList <$> mapConcurrently (connect cmtv dests metrics) conns
-  liftIO . atomically $ writeTVar cmtv mcs
-  mapConcurrently_ (sub mcs) sinks
-  raceABunch_ $ map (liftIO . waitForClient) (Map.elems mcs)
+  let env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets
+  flip runReaderT env $ do
+    mcs' <- Map.fromList <$> mapConcurrently connect conns
+    liftIO . atomically $ writeTVar cmtv mcs'
+    mapConcurrently_ sub sinks
+    raceABunch_ $ map (liftIO . waitForClient) (Map.elems mcs')
 
   where
-    sub :: (MonadIO m, MonadLogger m) => Map Server MQTTClient -> Sink -> m ()
-    sub m (Sink n dests) = do
+    sub :: Sink -> Bridge ()
+    sub (Sink n dests) = do
+      m <- mcs
       logInfo $ mconcat ["subscribing ", lstr dests, " at ", lstr n]
       subrv <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
                                                              _noLocal=True,
@@ -151,10 +170,10 @@ run Options{..} = runStderrLoggingT . logfilt $ do
                                                              _retainAsPublished=True}) | t <- destTopics dests] mempty
       logInfo $ mconcat ["Sub response from ", lstr n, ": ", lstr subrv]
 
-    connect cm dm metrics (Conn n u o) = do
+    connect (Conn n u o) = do
       logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr (Map.toList o)]
       mc <- withRunInIO $ \unl -> do
-        mc <- connectMQTT u o (copyMsg cm dm n metrics unl)
+        mc <- connectMQTT u o (copyMsg n unl)
         props <- svrProps mc
         unl . logInfo $ mconcat ["Connected to ", lstr u, " - server properties: ", lstr props]
         pure mc

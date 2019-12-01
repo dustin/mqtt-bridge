@@ -38,6 +38,8 @@ dependencies:
 - monad-logger
 - unliftio
 - unliftio-core
+- mtl
+- transformers
 
 library:
   source-dirs: src
