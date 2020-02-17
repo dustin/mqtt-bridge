@@ -17,7 +17,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-14.20
+resolver: lts-15.0
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -40,8 +40,9 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps:
 - net-mqtt-0.6.2.3
-- ekg-0.4.0.15
-- ekg-json-0.1.0.6
+- ekg-core-0.1.1.6@sha256:7635308e37d5787994803e24fcb609167fd6c2cbe2fb26c76f22402f8fa49419,1937
+- ekg-0.4.0.15@sha256:f35b2c6d80415314f84056afaba6e622bf8d90eb01d0504c87f04c64cb105e04,2030
+- ekg-json-0.1.0.6@sha256:4ff2e9cac213a5868ae8b4a7c72a16a9a76fac14d944ae819b3d838a9725569b,1050
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
