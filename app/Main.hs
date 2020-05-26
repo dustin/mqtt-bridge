@@ -123,9 +123,11 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
       Metrics{destCounters} <- asks metrics
       liftIO $ do
         inc (destCounters Map.! d)
-        pubAliased mc dtopic _pubBody _pubRetain _pubQoS _pubProps
+        pubAliased mc dtopic _pubBody _pubRetain _pubQoS (filter cleanProps _pubProps)
 
         where
+          cleanProps (PropTopicAlias _) = False
+          cleanProps _                  = True
           rewritten dtopic
             | topic == dtopic = ""
             | otherwise       = " as " <> lstr dtopic
