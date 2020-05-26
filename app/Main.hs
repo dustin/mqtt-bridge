@@ -6,13 +6,11 @@
 
 module Main where
 
-import           Control.Concurrent.STM   (TVar, atomically, newTVarIO,
-                                           readTVar, retry, writeTVar)
+import           Control.Concurrent.STM   (TVar, atomically, newTVarIO, readTVar, retry, writeTVar)
 import           Control.Monad            (void, when)
 import           Control.Monad.IO.Class   (MonadIO (..))
 import           Control.Monad.IO.Unlift  (MonadUnliftIO, withRunInIO)
-import           Control.Monad.Logger     (LogLevel (..), LoggingT, MonadLogger,
-                                           filterLogger, logWithoutLoc,
+import           Control.Monad.Logger     (LogLevel (..), LoggingT, MonadLogger, filterLogger, logWithoutLoc,
                                            runStderrLoggingT)
 import           Control.Monad.Reader     (ReaderT (..), asks, runReaderT)
 import qualified Data.ByteString          as BS
@@ -24,17 +22,13 @@ import qualified Data.Text.Encoding       as TE
 import           Data.Validation          (Validation (..))
 import           Network.MQTT.Client
 import           Network.MQTT.Topic       (match)
-import           Network.MQTT.Types       (PublishRequest (..),
-                                           RetainHandling (..))
+import           Network.MQTT.Types       (ConnACKFlags (..), PublishRequest (..), RetainHandling (..))
 import           Network.URI
-import           Options.Applicative      (Parser, auto, execParser, fullDesc,
-                                           help, helper, info, long, option,
-                                           progDesc, short, showDefault,
-                                           strOption, switch, value, (<**>))
+import           Options.Applicative      (Parser, auto, execParser, fullDesc, help, helper, info, long, option,
+                                           progDesc, short, showDefault, strOption, switch, value, (<**>))
 import           System.Remote.Counter    (Counter, inc)
 import qualified System.Remote.Monitoring as RM
-import           UnliftIO.Async           (async, mapConcurrently,
-                                           mapConcurrently_, waitAnyCancel)
+import           UnliftIO.Async           (async, mapConcurrently, mapConcurrently_, waitAnyCancel)
 
 import           Bridge
 import           BridgeConf
@@ -174,8 +168,8 @@ run Options{..} = runStderrLoggingT . logfilt $ do
       logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr (Map.toList o)]
       mc <- withRunInIO $ \unl -> do
         mc <- connectMQTT u o (copyMsg n unl)
-        props <- svrProps mc
-        unl . logInfo $ mconcat ["Connected to ", lstr u, " - server properties: ", lstr props]
+        (ConnACKFlags sp _ props) <- connACK mc
+        unl . logInfo $ mconcat ["Connected to ", lstr u, " ", lstr sp,  " - server properties: ", lstr props]
         pure mc
       pure (n, mc)
 
