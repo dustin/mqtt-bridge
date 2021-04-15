@@ -20,17 +20,21 @@ import           Network.URI
 
 type Parser = Parsec Void Text
 
-data BridgeConf = BridgeConf [Conn] [Sink] deriving(Show)
+data BridgeConf = BridgeConf [Conn] [Sink] deriving(Show, Eq)
 
 type Server = Text
 
-data Conn = Conn Server URI (Map Text Int) deriving(Show)
+data Conn = Conn Server URI (Map Text Int) deriving(Show, Eq)
 
-data Sink = Sink Server [Dest] deriving(Show)
+data Sink = Sink Server [Dest] deriving(Show, Eq)
 
-data Dest = Dest Text Server TransFun deriving(Show)
+data Dest = Dest Text Server TransFun deriving(Show, Eq)
 
 data TransFun = TransFun String (Text -> Text)
+
+-- This is meant to be enough Eq to get tests useful.
+instance Eq TransFun where
+  (TransFun a f1) == (TransFun b f2) = (a == b) && (f1 "test" == f2 "test")
 
 instance Show TransFun where
   show (TransFun n _) = n

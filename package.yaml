@@ -56,3 +56,18 @@ executables:
     - -Wall
     dependencies:
     - mqtt-bridge
+
+tests:
+  influxer-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - mqtt-bridge
+    - QuickCheck
+    - tasty
+    - tasty-hunit
+    - tasty-quickcheck
