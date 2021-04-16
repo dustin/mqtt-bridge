@@ -45,10 +45,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
 parseBridgeConf :: Parser BridgeConf
-parseBridgeConf = do
-  conns <- some (lexeme parseConn)
-  sinks <- some parseSink <* eof
-  pure $ BridgeConf conns sinks
+parseBridgeConf = BridgeConf <$> some (lexeme parseConn) <*> some parseSink <* eof
 
 word :: Parser Text
 word = pack <$> some alphaNumChar
@@ -60,8 +57,7 @@ parseConn = do
 
   where
     src = do
-      _ <- lexeme "conn"
-      w <- lexeme word
+      w <- lexeme "conn" *> lexeme word
       ustr <- some (noneOf ['\n', ' '])
       let (Just u) = parseURI ustr
       pure (w, u)
@@ -72,23 +68,17 @@ parseConn = do
       pure (k,v)
 
 parseSink :: Parser Sink
-parseSink = do
-  (n, ss) <- itemList src stuff
-  pure $ Sink n ss
-
+parseSink = uncurry Sink <$> itemList src stuff
     where
       src = lexeme "from" *> word
 
       stuff = do
-        t <- lexeme "sync" *> lexeme qstr
-        _ <- lexeme "->"
+        t <- lexeme "sync" *> lexeme qstr <* lexeme "->"
         w <- lexeme word
         tf <- option (TransFun "id" id) (try parseTF)
         pure $ Dest (pack t) w tf
 
-      parseTF = do
-        d <- lexeme qstr
-        pure $ TransFun "rewrite" ((const . pack) d)
+      parseTF = lexeme qstr >>= \d -> pure $ TransFun "rewrite" ((const . pack) d)
 
       qstr = between "\"" "\"" (some $ noneOf ['"'])
              <|> between "'" "'" (some $ noneOf ['\''])
@@ -101,7 +91,7 @@ itemList pa pb = L.nonIndented sc (L.indentBlock sc p)
       return (L.IndentMany Nothing (return . (header, )) pb)
 
 parseFile :: Parser a -> String -> IO a
-parseFile f s = pack <$> readFile s >>= either (fail.errorBundlePretty) pure . parse f s
+parseFile f s = readFile s >>= (either (fail . errorBundlePretty) pure . parse f s) . pack
 
 parseConfFile :: String -> IO BridgeConf
 parseConfFile = parseFile parseBridgeConf
