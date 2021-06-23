@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
 
@@ -7,7 +6,7 @@ module BridgeConf (
   ) where
 
 import           Control.Applicative        (empty, (<|>))
-import           Control.Monad              (foldM)
+import           Control.Monad              (when)
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack)
@@ -47,26 +46,22 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
 parseBridgeConf :: Parser BridgeConf
-parseBridgeConf = do
-  conns <- foldM (\m conn@(Conn s _ _) ->
-                    Map.alterF (\case
-                                   Nothing -> pure (Just conn)
-                                   Just _  -> fail ("duplicate conn: " <> show s)) s m)
-           mempty =<< some (lexeme parseConn)
-  sinks <- some (parseSink conns) <* eof
-  pure $ BridgeConf conns sinks
+parseBridgeConf = conns mempty >>= \cs -> BridgeConf cs <$> some (parseSink cs) <* eof
+  where
+    conns m = maybe (pure m) (conns . (<>m)) =<< option Nothing (Just <$> lexeme (parseConn m))
 
 word :: Parser Text
 word = pack <$> some alphaNumChar
 
-parseConn :: Parser Conn
-parseConn = do
+parseConn :: Map Text Conn -> Parser (Map Text Conn)
+parseConn m = do
   ((n, url), opts) <- itemList src stuff
-  pure $ Conn n url (Map.fromList opts)
+  pure $ Map.insert n (Conn n url (Map.fromList opts)) m
 
   where
     src = do
       w <- lexeme "conn" *> lexeme word
+      when (w `Map.member` m) $ fail ("duplicate conn: " <> show w)
       ustr <- some (noneOf ['\n', ' '])
       let (Just u) = parseURI ustr
       pure (w, u)
@@ -83,9 +78,8 @@ parseSink conns = uncurry Sink <$> itemList src stuff
 
       validConn = do
         w <- word
-        if w `Map.member` conns
-          then pure w
-          else fail ("invalid conn in sync confs: " <> show w)
+        when (w `Map.notMember` conns) $ fail ("invalid conn in sync confs: " <> show w)
+        pure w
 
       stuff = do
         t <- lexeme "sync" *> lexeme qstr <* lexeme "->"
@@ -101,9 +95,7 @@ parseSink conns = uncurry Sink <$> itemList src stuff
 itemList :: Parser a -> Parser b ->  Parser (a, [b])
 itemList pa pb = L.nonIndented sc (L.indentBlock sc p)
   where
-    p = do
-      header <- pa
-      return (L.IndentMany Nothing (return . (header, )) pb)
+    p = pa >>= \header -> pure (L.IndentMany Nothing (return . (header, )) pb)
 
 parseFile :: Parser a -> String -> IO a
 parseFile f s = readFile s >>= (either (fail . errorBundlePretty) pure . parse f s) . pack
