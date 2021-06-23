@@ -16,13 +16,14 @@ testParser = do
   let (Just u1) = parseURI "mqtt://localhost/"
       (Just u2) = parseURI "ws://test.mosquitto.org:8080/"
   assertEqual "" (BridgeConf
-                  [Conn "local" u1
-                    (Map.fromList [("maximum-packet-size",8192),
-                                   ("receive-maximum",64),
-                                   ("session-expiry-interval",1800),
-                                   ("topic-alias-maximum",4096)]),
-                   Conn "test" u2
-                    (Map.fromList [("session-expiry-interval",187)])]
+                  (Map.fromList
+                  [("local", Conn "local" u1
+                     (Map.fromList [("maximum-packet-size",8192),
+                                    ("receive-maximum",64),
+                                    ("session-expiry-interval",1800),
+                                    ("topic-alias-maximum",4096)])),
+                   ("test", (Conn "test" u2
+                     (Map.fromList [("session-expiry-interval",187)])))])
                    [Sink "test" [Dest "VirtualTopic/#" "local" (TransFun "id" id),
                                  Dest "VirtualTopic/#" "local"
                                   (TransFun "rewrite" (const "junkpile"))],

@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
 
@@ -6,6 +7,7 @@ module BridgeConf (
   ) where
 
 import           Control.Applicative        (empty, (<|>))
+import           Control.Monad              (foldM)
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack)
@@ -19,7 +21,7 @@ import           Network.URI
 
 type Parser = Parsec Void Text
 
-data BridgeConf = BridgeConf [Conn] [Sink] deriving(Show, Eq)
+data BridgeConf = BridgeConf (Map Text Conn) [Sink] deriving(Show, Eq)
 
 type Server = Text
 
@@ -45,7 +47,14 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
 parseBridgeConf :: Parser BridgeConf
-parseBridgeConf = BridgeConf <$> some (lexeme parseConn) <*> some parseSink <* eof
+parseBridgeConf = do
+  conns <- foldM (\m conn@(Conn s _ _) ->
+                    Map.alterF (\case
+                                   Nothing -> pure (Just conn)
+                                   Just _  -> fail ("duplicate conn: " <> show s)) s m)
+           mempty =<< some (lexeme parseConn)
+  sinks <- some (parseSink conns) <* eof
+  pure $ BridgeConf conns sinks
 
 word :: Parser Text
 word = pack <$> some alphaNumChar
@@ -67,14 +76,20 @@ parseConn = do
       v <- lexeme "=" *> lexeme L.decimal
       pure (k,v)
 
-parseSink :: Parser Sink
-parseSink = uncurry Sink <$> itemList src stuff
+parseSink :: Map Text Conn -> Parser Sink
+parseSink conns = uncurry Sink <$> itemList src stuff
     where
-      src = lexeme "from" *> word
+      src = lexeme "from" *> validConn
+
+      validConn = do
+        w <- word
+        if w `Map.member` conns
+          then pure w
+          else fail ("invalid conn in sync confs: " <> show w)
 
       stuff = do
         t <- lexeme "sync" *> lexeme qstr <* lexeme "->"
-        w <- lexeme word
+        w <- lexeme validConn
         tf <- option (TransFun "id" id) (try parseTF)
         pure $ Dest (pack t) w tf
 

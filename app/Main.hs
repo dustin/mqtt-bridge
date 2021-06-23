@@ -19,7 +19,6 @@ import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import           Data.Text                (Text, pack)
 import qualified Data.Text.Encoding       as TE
-import           Data.Validation          (Validation (..))
 import           Network.MQTT.Client
 import           Network.MQTT.Topic       (match)
 import           Network.MQTT.Types       (ConnACKFlags (..), PublishRequest (..), RetainHandling (..))
@@ -63,7 +62,7 @@ options = Options
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
 
 logAt :: MonadLogger m => LogLevel -> Text -> m ()
-logAt l = logWithoutLoc "" l
+logAt = logWithoutLoc ""
 
 logInfo :: MonadLogger m => Text -> m ()
 logInfo = logAt LevelInfo
@@ -87,7 +86,7 @@ connectMQTT uri opts f = connectURI mqttConfig{_cleanSession=opt "session-expiry
                                               } uri
 
   where
-    protocol = if (opt "protocol" 5) == (3::Int)
+    protocol = if opt "protocol" 5 == (3::Int)
                then Protocol311
                else Protocol50
 
@@ -141,16 +140,13 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   -- Metrics
   metricServer <- liftIO $ RM.forkServer optEKGAddr optEKGPort
 
-  vc <- validateConfig <$> liftIO (parseConfFile optConfFile)
-  let fullConf@(BridgeConf conns sinks) = case vc of
-                                            Success c -> c
-                                            Failure f -> (error . show) f
+  fullConf@(BridgeConf conns sinks) <- liftIO (parseConfFile optConfFile)
 
   mets <- liftIO $ makeMetrics metricServer fullConf
   cmtv <- liftIO $ newTVarIO mempty
   let env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets
   flip runReaderT env $ do
-    mcs' <- Map.fromList <$> mapConcurrently connect conns
+    mcs' <- Map.fromList <$> mapConcurrently connect (Map.elems conns)
     liftIO . atomically $ writeTVar cmtv mcs'
     mapConcurrently_ sub sinks
     raceABunch_ $ map (liftIO . waitForClient) (Map.elems mcs')
@@ -178,7 +174,7 @@ run Options{..} = runStderrLoggingT . logfilt $ do
     makeMetrics :: RM.Server -> BridgeConf -> IO Metrics
     makeMetrics svr (BridgeConf conns _) = Metrics <$> srcConfs <*> dstConfs
       where
-        names = map (\(Conn s _ _) -> s) conns
+        names = Map.keys conns
         srcConfs = Map.fromList <$> traverse (\s -> (s,) <$> RM.getCounter ("mqtt-bridge.from." <> s) svr) names
         dstConfs = Map.fromList <$> traverse (\s -> (s,) <$> RM.getCounter ("mqtt-bridge.to." <> s) svr) names
 

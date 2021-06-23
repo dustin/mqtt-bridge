@@ -32,7 +32,6 @@ dependencies:
 - network-uri
 - utf8-string
 - containers
-- validation
 - ekg
 - ekg-core
 - monad-logger
