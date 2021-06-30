@@ -1,10 +1,10 @@
-module Bridge (destTopics) where
+module Bridge (destFilters) where
 
 import qualified Data.Set           as Set
 
-import           Network.MQTT.Topic (Topic)
+import           Network.MQTT.Topic (Filter)
 
 import           BridgeConf
 
-destTopics :: [Dest] -> [Topic]
-destTopics = Set.toList . Set.fromList . map (\(Dest t _ _) -> t)
+destFilters :: [Dest] -> [Filter]
+destFilters = Set.toList . Set.fromList . map (\(Dest t _ _) -> t)

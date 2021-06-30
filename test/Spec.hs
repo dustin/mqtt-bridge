@@ -6,6 +6,7 @@ import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck as QC
 
 import qualified Data.Map.Strict       as Map
+import           Network.MQTT.Topic
 import           Network.URI           (parseURI)
 
 import           BridgeConf
@@ -24,10 +25,10 @@ testParser = do
                                     ("topic-alias-maximum",4096)])),
                    ("test", (Conn "test" u2
                      (Map.fromList [("session-expiry-interval",187)])))])
-                   [Sink "test" [Dest "VirtualTopic/#" "local" (TransFun "id" id),
+                   [Sink "test" [Dest "VirtualTopic/#" "local" (TransFun "id" mkTopic),
                                  Dest "VirtualTopic/#" "local"
-                                  (TransFun "rewrite" (const "junkpile"))],
-                    Sink "local" [Dest "tmp/#" "test" (TransFun "id" id)]]) cfg
+                                  (TransFun "rewrite" (const (Just "junkpile")))],
+                    Sink "local" [Dest "tmp/#" "test" (TransFun "id" mkTopic)]]) cfg
 
 tests :: [TestTree]
 tests = [

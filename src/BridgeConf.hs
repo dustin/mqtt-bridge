@@ -16,6 +16,8 @@ import           Text.Megaparsec.Char       (alphaNumChar, space1)
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Error      (errorBundlePretty)
 
+import           Network.MQTT.Topic
+
 import           Network.URI
 
 type Parser = Parsec Void Text
@@ -28,9 +30,9 @@ data Conn = Conn Server URI (Map Text Int) deriving(Show, Eq)
 
 data Sink = Sink Server [Dest] deriving(Show, Eq)
 
-data Dest = Dest Text Server TransFun deriving(Show, Eq)
+data Dest = Dest Filter Server TransFun deriving(Show, Eq)
 
-data TransFun = TransFun String (Text -> Text)
+data TransFun = TransFun String (Text -> Maybe Topic)
 
 -- This is meant to be enough Eq to get tests useful.
 instance Eq TransFun where
@@ -81,13 +83,16 @@ parseSink conns = uncurry Sink <$> itemList src stuff
         when (w `Map.notMember` conns) $ fail ("invalid conn in sync confs: " <> show w)
         pure w
 
-      stuff = do
-        t <- lexeme "sync" *> lexeme qstr <* lexeme "->"
-        w <- lexeme validConn
-        tf <- option (TransFun "id" id) (try parseTF)
-        pure $ Dest (pack t) w tf
+      aFilter = qstr >>= maybe (fail "bad filter") pure . mkFilter . pack
+      aTopic = qstr >>= maybe (fail "bad topic") pure . mkTopic . pack
 
-      parseTF = lexeme qstr >>= \d -> pure $ TransFun "rewrite" ((const . pack) d)
+      stuff = do
+        t <- lexeme "sync" *> lexeme aFilter <* lexeme "->"
+        w <- lexeme validConn
+        tf <- option (TransFun "id" mkTopic) (try parseTF)
+        pure $ Dest t w tf
+
+      parseTF = lexeme aTopic >>= \d -> pure $ TransFun "rewrite" (const (Just d))
 
       qstr = between "\"" "\"" (some $ noneOf ['"'])
              <|> between "'" "'" (some $ noneOf ['\''])

@@ -20,7 +20,7 @@ import qualified Data.Map.Strict          as Map
 import           Data.Text                (Text, pack)
 import qualified Data.Text.Encoding       as TE
 import           Network.MQTT.Client
-import           Network.MQTT.Topic       (match)
+import           Network.MQTT.Topic       (match, mkTopic, unTopic)
 import           Network.MQTT.Types       (ConnACKFlags (..), PublishRequest (..), RetainHandling (..))
 import           Network.URI
 import           Options.Applicative      (Parser, auto, execParser, fullDesc, help, helper, info, long, option,
@@ -111,18 +111,19 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
   mapM_ deliver dests
 
   where
-    topic = (TE.decodeUtf8 . BL.toStrict) _pubTopic
-    deliver :: (Server, Text -> Text) -> Bridge ()
+    Just topic = (mkTopic . TE.decodeUtf8 . BL.toStrict) _pubTopic
+    deliver :: (Server, Text -> Maybe Topic) -> Bridge ()
     deliver (d,f) = do
       mcs' <- mcs
       let mc = mcs' Map.! d
-          dtopic = f topic
-      logDbg $ mconcat ["Delivering ", lstr topic, rewritten dtopic,
+          dtopic = f (unTopic topic)
+      Just dt <- pure dtopic
+      logDbg $ mconcat ["Delivering ", lstr topic, rewritten dt,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]
       Metrics{destCounters} <- asks metrics
       liftIO $ do
         inc (destCounters Map.! d)
-        pubAliased mc dtopic _pubBody _pubRetain _pubQoS (filter cleanProps _pubProps)
+        pubAliased mc dt _pubBody _pubRetain _pubQoS (filter cleanProps _pubProps)
 
         where
           cleanProps (PropTopicAlias _) = False
@@ -159,7 +160,7 @@ run Options{..} = runStderrLoggingT . logfilt $ do
       subrv <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
                                                              _noLocal=True,
                                                              _retainHandling=SendOnSubscribeNew,
-                                                             _retainAsPublished=True}) | t <- destTopics dests] mempty
+                                                             _retainAsPublished=True}) | t <- destFilters dests] mempty
       logInfo $ mconcat ["Sub response from ", lstr n, ": ", lstr subrv]
 
     connect (Conn n u o) = do
