@@ -118,7 +118,7 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
       let mc = mcs' Map.! d
           dtopic = f (unTopic topic)
       Just dt <- pure dtopic
-      logDbg $ mconcat ["Delivering ", lstr topic, rewritten dt,
+      logDbg $ mconcat ["Delivering ", unTopic topic, rewritten dt,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]
       Metrics{destCounters} <- asks metrics
       liftIO $ do
