@@ -74,16 +74,17 @@ lstr :: Show a => a -> Text
 lstr = pack . show
 
 connectMQTT :: URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
-connectMQTT uri opts f = connectURI mqttConfig{_cleanSession=opt "session-expiry-interval" 0 == (0::Int),
-                                               _protocol=protocol,
-                                               _msgCB=LowLevelCallback f,
-                                               _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 0,
-                                                           PropTopicAliasMaximum $ opt "topic-alias-maximum" 2048,
-                                                           PropMaximumPacketSize $ opt "maximum-packet-size" 65536,
-                                                           PropReceiveMaximum $ opt "receive-maximum" 256,
-                                                           PropRequestResponseInformation 1,
-                                                           PropRequestProblemInformation 1]
-                                              } uri
+connectMQTT uri opts f =
+  connectURI mqttConfig{_cleanSession=opt "session-expiry-interval" 0 == (0::Int),
+                        _protocol=protocol,
+                        _msgCB=LowLevelCallback f,
+                        _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 0,
+                                    PropTopicAliasMaximum $ opt "topic-alias-maximum" 2048,
+                                    PropMaximumPacketSize $ opt "maximum-packet-size" 65536,
+                                    PropReceiveMaximum $ opt "receive-maximum" 256,
+                                    PropRequestResponseInformation 1,
+                                    PropRequestProblemInformation 1]
+                       } uri
 
   where
     protocol = if opt "protocol" 5 == (3::Int)
