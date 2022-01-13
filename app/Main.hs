@@ -73,11 +73,11 @@ logDbg = logAt LevelDebug
 lstr :: Show a => a -> Text
 lstr = pack . show
 
-connectMQTT :: URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
-connectMQTT uri opts f =
+connectMQTT :: OrderedType -> URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
+connectMQTT ot uri opts f =
   connectURI mqttConfig{_cleanSession=opt "session-expiry-interval" 0 == (0::Int),
                         _protocol=protocol,
-                        _msgCB=LowLevelCallback f,
+                        _msgCB=con f,
                         _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 0,
                                     PropTopicAliasMaximum $ opt "topic-alias-maximum" 2048,
                                     PropMaximumPacketSize $ opt "maximum-packet-size" 65536,
@@ -92,6 +92,10 @@ connectMQTT uri opts f =
                else Protocol50
 
     opt t d = toEnum $ Map.findWithDefault d t opts
+
+    con = case ot of
+            Unordered -> LowLevelCallback
+            Ordered   -> OrderedLowLevelCallback
 
 mcs :: Bridge (Map Server MQTTClient)
 mcs = do
@@ -164,10 +168,10 @@ run Options{..} = runStderrLoggingT . logfilt $ do
                                                              _retainAsPublished=True}) | t <- destFilters dests] mempty
       logInfo $ mconcat ["Sub response from ", lstr n, ": ", lstr subrv]
 
-    connect (Conn n u o) = do
+    connect (Conn n ot u o) = do
       logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr (Map.toList o)]
       mc <- withRunInIO $ \unl -> do
-        mc <- connectMQTT u o (copyMsg n unl)
+        mc <- connectMQTT ot u o (copyMsg n unl)
         (ConnACKFlags sp _ props) <- connACK mc
         unl . logInfo $ mconcat ["Connected to ", lstr u, " ", lstr sp,  " - server properties: ", lstr props]
         pure mc

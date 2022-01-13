@@ -2,11 +2,12 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, BridgeConf(..), Server, Sink(..), Conn(..), Dest(..), TransFun(..)
+  parseConfFile, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
 import           Control.Monad              (when)
+import           Data.Functor               (($>))
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack)
@@ -26,7 +27,9 @@ data BridgeConf = BridgeConf (Map Text Conn) [Sink] deriving(Show, Eq)
 
 type Server = Text
 
-data Conn = Conn Server URI (Map Text Int) deriving(Show, Eq)
+data OrderedType = Unordered | Ordered deriving (Show, Eq)
+
+data Conn = Conn Server OrderedType URI (Map Text Int) deriving(Show, Eq)
 
 data Sink = Sink Server [Dest] deriving(Show, Eq)
 
@@ -57,16 +60,17 @@ word = pack <$> some alphaNumChar
 
 parseConn :: Map Text Conn -> Parser (Map Text Conn)
 parseConn m = do
-  ((n, url), opts) <- itemList src stuff
-  pure $ Map.insert n (Conn n url (Map.fromList opts)) m
+  ((n, ot, url), opts) <- itemList src stuff
+  pure $ Map.insert n (Conn n ot url (Map.fromList opts)) m
 
   where
     src = do
       w <- lexeme "conn" *> lexeme word
+      ot <- option Unordered (lexeme "ordered" $> Ordered)
       when (w `Map.member` m) $ fail ("duplicate conn: " <> show w)
       ustr <- some (noneOf ['\n', ' '])
       let (Just u) = parseURI ustr
-      pure (w, u)
+      pure (w, ot, u)
 
     stuff = do
       k <- pack <$> lexeme (some (noneOf ['\n', ' ', '=']))
