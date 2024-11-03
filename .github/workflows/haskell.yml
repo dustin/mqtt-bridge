@@ -9,12 +9,12 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
 
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Cache Key
       id: cache_key
@@ -22,7 +22,7 @@ jobs:
 
     - name: Cache Dependencies
       id: cache
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: ~/.stack
         key: ${{ matrix.os }}-${{ steps.cache_key.outputs.key }}
@@ -36,10 +36,11 @@ jobs:
       run: |
         stack --no-terminal test --bench --no-run-benchmarks
         stack install
-        cp $HOME/.local/bin/mqtt-bridge .
+        mkdir dist
+        cp $HOME/.local/bin/mqtt-bridge dist
 
     - name: Store Artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: mqtt-bridge-${{ matrix.os }}
-        path: mqtt-bridge
+        path: dist
