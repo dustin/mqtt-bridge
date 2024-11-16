@@ -1,6 +1,5 @@
 *~
 .stack-work/
-mqtt-bridge.cabal
 .DS_Store
 .direnv/
 dist-newstyle/

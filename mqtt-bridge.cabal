@@ -1,0 +1,122 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.37.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 1d0538abdc2abd5d08ace8e8013800fba3a24c468dfdea6aea34e0e7ea4a0bac
+
+name:           mqtt-bridge
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/dustin/mqtt-bridge#readme>
+homepage:       https://github.com/dustin/mqtt-bridge#readme
+bug-reports:    https://github.com/dustin/mqtt-bridge/issues
+author:         Dustin Sallings
+maintainer:     dustin@spy.net
+copyright:      MIT
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/dustin/mqtt-bridge
+
+library
+  exposed-modules:
+      Bridge
+      BridgeConf
+  other-modules:
+      Paths_mqtt_bridge
+  hs-source-dirs:
+      src
+  ghc-options: -Wall
+  build-depends:
+      async
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , ekg
+    , ekg-core
+    , megaparsec
+    , monad-logger
+    , mtl
+    , net-mqtt >=0.8.2.0
+    , network-uri
+    , optparse-applicative
+    , stm
+    , text
+    , transformers
+    , unliftio
+    , unliftio-core
+    , unordered-containers
+    , utf8-string
+  default-language: Haskell2010
+
+executable mqtt-bridge
+  main-is: Main.hs
+  other-modules:
+      Paths_mqtt_bridge
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall
+  build-depends:
+      async
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , ekg
+    , ekg-core
+    , megaparsec
+    , monad-logger
+    , mqtt-bridge
+    , mtl
+    , net-mqtt >=0.8.2.0
+    , network-uri
+    , optparse-applicative
+    , stm
+    , text
+    , transformers
+    , unliftio
+    , unliftio-core
+    , unordered-containers
+    , utf8-string
+  default-language: Haskell2010
+
+test-suite influxer-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_mqtt_bridge
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      QuickCheck
+    , async
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , ekg
+    , ekg-core
+    , megaparsec
+    , monad-logger
+    , mqtt-bridge
+    , mtl
+    , net-mqtt >=0.8.2.0
+    , network-uri
+    , optparse-applicative
+    , stm
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , text
+    , transformers
+    , unliftio
+    , unliftio-core
+    , unordered-containers
+    , utf8-string
+  default-language: Haskell2010
