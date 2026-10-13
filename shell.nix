@@ -1,17 +1,42 @@
 { pkgs ? import <nixpkgs> { } }:
 with pkgs;
+let
+  hpkgs = haskellPackages;
+  ghcWithDeps = hpkgs.ghcWithPackages (p: with p; [
+    async
+    bytestring
+    containers
+    ekg
+    ekg-core
+    megaparsec
+    monad-logger
+    mtl
+    net-mqtt
+    network-uri
+    optparse-applicative
+    stm
+    text
+    transformers
+    unliftio
+    unliftio-core
+    unordered-containers
+    utf8-string
+    # test deps
+    QuickCheck
+    tasty
+    tasty-hunit
+    tasty-quickcheck
+  ]);
+in
 mkShell {
   buildInputs = [
-    stack
-    sqlite-interactive
-    ffmpeg
+    ghcWithDeps
     stylish-haskell
     hlint
-    niv
     ghcid
-    haskell-language-server
+    hpkgs.haskell-language-server
     cabal-install
-    ghc
+    hpack
     zlib
   ];
 

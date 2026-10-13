@@ -1,5 +1,5 @@
 # Stage 1: Build the Haskell project
-FROM haskell:9.6-bullseye AS builder
+FROM haskell:9.10-bookworm AS builder
 
 RUN apt-get update && apt-get install -y zlib1g zlib1g-dev
 
@@ -12,9 +12,9 @@ COPY . ./
 RUN cabal install
 
 # Stage 2: Create the final image
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y zlib1g
+RUN apt-get update && apt-get install -y zlib1g ca-certificates
 
 WORKDIR /usr/local/bin
 
@@ -25,5 +25,8 @@ VOLUME /etc/mqtt-bridge
 WORKDIR /etc/mqtt-bridge
 
 COPY bridge.conf .
+
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 ENTRYPOINT ["/usr/local/bin/mqtt-bridge"]

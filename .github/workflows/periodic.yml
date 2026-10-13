@@ -1,0 +1,34 @@
+name: Periodic
+
+on:
+  workflow_dispatch:
+  schedule:
+  - cron: "0 0 * * 1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        nix_path: nixpkgs=channel:nixos-unstable
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Cache Nix store
+      uses: actions/cache@v6
+      with:
+        path: /nix
+        key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+        restore-keys: nix-${{ runner.os }}-
+
+    - name: Update flake inputs (nixpkgs, GHC, Haskell packages)
+      run: |
+        nix flake update
+        git diff --stat flake.lock
+
+    - name: Build & Test against updated inputs
+      run: nix develop --command cabal test --test-show-details=streaming

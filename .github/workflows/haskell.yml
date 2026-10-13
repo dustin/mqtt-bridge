@@ -1,4 +1,4 @@
-name: haskell build
+name: Haskell CI
 
 on:
   push:
@@ -7,77 +7,36 @@ on:
     branches: [ master ]
 
 jobs:
-  stack:
-    runs-on: 'ubuntu-latest'
+  build:
+    runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v7
 
-    - name: Cache Key
-      id: cache_key
-      run: echo "key=$(md5sum stack.yaml | awk '{print $1}')" >> $GITHUB_ENV
-
-    - name: Cache Dependencies
-      id: cache
-      uses: actions/cache@v5
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
       with:
-        path: ~/.stack
-        key: ubuntu-latest-${{ env.key }}
+        nix_path: nixpkgs=channel:nixos-unstable
+        extra_nix_config: |
+          experimental-features = nix-command flakes
 
-    - name: Build Snapshot
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: |
-        stack --no-terminal test --bench --only-snapshot
+    - name: Cache Nix store
+      uses: actions/cache@v6
+      with:
+        path: /nix
+        key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+        restore-keys: nix-${{ runner.os }}-
 
     - name: Build & Test
+      run: nix develop --command cabal test --test-show-details=streaming
+
+    - name: Install
       run: |
-        stack --no-terminal test --bench --no-run-benchmarks
-        stack install
         mkdir dist
-        cp $HOME/.local/bin/mqtt-bridge dist
+        nix develop --command cabal install --installdir=dist --install-method=copy
 
     - name: Store Artifact
       uses: actions/upload-artifact@v7
       with:
         name: mqtt-bridge
         path: dist
-
-  cabal:
-    runs-on: 'ubuntu-latest'
-    steps:
-    - uses: actions/checkout@v6.0.2
-
-    - name: Set up Haskell
-      uses: haskell-actions/setup@v2
-      id: setup
-      with:
-        ghc-version: '9.6'
-        cabal-version: 'latest'
-
-    - name: Generate Cache Keys
-      id: cache_key
-      run: |
-        echo "ghc_ver=${{ steps.setup.outputs.ghc-version }}" >> $GITHUB_ENV
-        cabal freeze
-        echo "dep_hash=$(md5sum cabal.project.freeze | awk '{print $1}')" >> $GITHUB_ENV
-
-    - name: Cache Dependencies
-      id: cache
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.cabal
-          dist-newstyle
-        key: ubuntu-latest-ghc-${{ env.ghc_ver }}-cabal-${{ env.dep_hash }}
-        restore-keys: |
-          ubuntu-latest-ghc-${{ env.ghc_ver }}-cabal-
-          ubuntu-latest-ghc-${{ env.ghc_ver }}-
-          ubuntu-latest-
-
-    - name: Install tasty-discover
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: cabal install --overwrite-policy=always tasty-discover
-
-    - name: Build & Test
-      run: |
-        cabal build
-        cabal test --test-show-details=streaming
