@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 20142c3e70f7396200ff221169cdf55f6c8f4076ec0f15b1b1b009238ddb1501
+-- hash: 20e185b5300a17d2757dcdb49378f1c4b3b186150bd628bdbd56375a5011c6eb
 
 name:           mqtt-bridge
 version:        0.1.0.0
@@ -90,6 +90,8 @@ test-suite influxer-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      DeliverySpec
+      FakeBroker
       Paths_mqtt_bridge
   hs-source-dirs:
       test
@@ -97,8 +99,10 @@ test-suite influxer-test
   build-depends:
       QuickCheck
     , async
+    , attoparsec
     , base >=4.7 && <5
     , bytestring
+    , conduit
     , containers
     , ekg
     , ekg-core

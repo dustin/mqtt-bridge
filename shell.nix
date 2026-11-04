@@ -32,6 +32,8 @@ let
     utf8-string
     # test deps
     QuickCheck
+    attoparsec
+    conduit
     tasty
     tasty-hunit
     tasty-quickcheck

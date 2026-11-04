@@ -67,6 +67,8 @@ tests:
     dependencies:
     - mqtt-bridge
     - QuickCheck
+    - attoparsec
+    - conduit
     - tasty
     - tasty-hunit
     - tasty-quickcheck

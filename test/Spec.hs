@@ -8,6 +8,7 @@ import           Network.MQTT.Topic
 import           Network.URI        (parseURI)
 
 import           BridgeConf
+import qualified DeliverySpec
 
 testParser :: Assertion
 testParser = do
@@ -30,7 +31,8 @@ testParser = do
 
 tests :: [TestTree]
 tests = [
-  testCase "example conf" testParser
+  testCase "example conf" testParser,
+  testGroup "delivery" DeliverySpec.tests
   ]
 
 main :: IO ()

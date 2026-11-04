@@ -65,11 +65,10 @@ run Options{..} = runStderrLoggingT . logfilt $ do
       pure (n, mc)
 
     makeMetrics :: RM.Server -> BridgeConf -> IO Metrics
-    makeMetrics svr (BridgeConf conns _) = Metrics <$> srcConfs <*> dstConfs
+    makeMetrics svr (BridgeConf conns _) = Metrics <$> counters "from" <*> counters "to" <*> counters "errors"
       where
         names = Map.keys conns
-        srcConfs = Map.fromList <$> traverse (\s -> (s,) <$> RM.getCounter ("mqtt-bridge.from." <> s) svr) names
-        dstConfs = Map.fromList <$> traverse (\s -> (s,) <$> RM.getCounter ("mqtt-bridge.to." <> s) svr) names
+        counters k = Map.fromList <$> traverse (\s -> (s,) <$> RM.getCounter ("mqtt-bridge." <> k <> "." <> s) svr) names
 
     logfilt = filterLogger (\_ -> flip (if optVerbose then (>=) else (>)) LevelDebug)
 

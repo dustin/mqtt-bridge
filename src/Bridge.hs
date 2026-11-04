@@ -6,7 +6,7 @@
 
 module Bridge (
   Env(..), Bridge, Metrics(..), destFilters, connectMQTT, copyMsg, subscribeSink, mcs,
-  raceABunch_, logAt, logInfo, logDbg, lstr
+  raceABunch_, logAt, logInfo, logDbg, logErr, lstr
   ) where
 
 import           Control.Concurrent.STM   (TVar, atomically, readTVar, retry)
@@ -27,6 +27,7 @@ import           Network.MQTT.Types       (PublishRequest (..), RetainHandling (
 import           Network.URI
 import           System.Remote.Counter    (Counter, inc)
 import           UnliftIO.Async           (async, waitAnyCancel)
+import           UnliftIO.Exception       (SomeException, tryAny)
 
 import           BridgeConf
 
@@ -43,7 +44,9 @@ type Bridge = ReaderT Env (LoggingT IO)
 
 data Metrics = Metrics {
   srcCounters  :: Map Server Counter,
-  destCounters :: Map Server Counter
+  destCounters :: Map Server Counter,
+  -- | Messages that couldn't be delivered, by destination.
+  errCounters  :: Map Server Counter
   }
 
 logAt :: MonadLogger m => LogLevel -> Text -> m ()
@@ -51,6 +54,9 @@ logAt = logWithoutLoc ""
 
 logInfo :: MonadLogger m => Text -> m ()
 logInfo = logAt LevelInfo
+
+logErr :: MonadLogger m => Text -> m ()
+logErr = logAt LevelError
 
 logDbg :: MonadLogger m => Text -> m ()
 logDbg = logAt LevelDebug
@@ -97,17 +103,31 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
   Metrics{srcCounters} <- asks metrics
 
   liftIO $ inc (srcCounters Map.! n)
-  let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) (dm Map.! n)
-  mapM_ deliver dests
+  case (mkTopic . TE.decodeUtf8 . BL.toStrict) _pubTopic of
+    Nothing -> logErr $ mconcat ["Dropping a message from ", lstr n, " with an invalid topic: ", lstr _pubTopic]
+    Just topic -> do
+      let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) (dm Map.! n)
+      mapM_ (contained topic) dests
 
   where
-    Just topic = (mkTopic . TE.decodeUtf8 . BL.toStrict) _pubTopic
-    deliver :: (Server, Text -> Maybe Topic) -> Bridge ()
-    deliver (d,f) = do
+    -- A failure delivering to one destination (e.g. it refuses the
+    -- message, or it's disconnected) is logged and counted, and doesn't
+    -- escape into the source connection.
+    contained :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
+    contained topic (d, f) = tryAny (deliver topic (d, f)) >>= either (failed topic d) pure
+
+    failed :: Topic -> Server -> SomeException -> Bridge ()
+    failed topic d e = do
+      Metrics{errCounters} <- asks metrics
+      liftIO $ mapM_ inc (Map.lookup d errCounters)
+      logErr $ mconcat ["Failed to deliver ", unTopic topic, " to ", lstr d, ": ", lstr e]
+
+    deliver :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
+    deliver topic (d,f) = do
       mcs' <- mcs
       let mc = mcs' Map.! d
           dtopic = f (unTopic topic)
-      Just dt <- pure dtopic
+      dt <- maybe (fail ("no destination topic for " <> show topic)) pure dtopic
       logDbg $ mconcat ["Delivering ", unTopic topic, rewritten dt,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]
       Metrics{destCounters} <- asks metrics
@@ -118,9 +138,9 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
         where
           cleanProps (PropTopicAlias _) = False
           cleanProps _                  = True
-          rewritten dtopic
-            | topic == dtopic = ""
-            | otherwise       = " as " <> lstr dtopic
+          rewritten dtopic'
+            | topic == dtopic' = ""
+            | otherwise        = " as " <> lstr dtopic'
 
 raceABunch_ :: (MonadUnliftIO m, MonadLogger m) => [m a] -> m ()
 raceABunch_ is = mapM async is >>= void.waitAnyCancel
