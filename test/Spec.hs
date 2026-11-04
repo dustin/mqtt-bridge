@@ -17,7 +17,7 @@ testParser = do
       (Just u2) = parseURI "ws://test.mosquitto.org:8080/"
   assertEqual "" (BridgeConf
                   (Map.fromList
-                  [("local", Conn "local" Unordered u1
+                  [("local", Conn "local" Ordered u1
                      (Map.fromList [("maximum-packet-size",8192),
                                     ("receive-maximum",64),
                                     ("session-expiry-interval",1800),
@@ -29,9 +29,18 @@ testParser = do
                                   (TransFun "rewrite" (const (Just "junkpile")))],
                     Sink "local" [Dest "tmp/#" "test" (TransFun "id" mkTopic)]]) cfg
 
+-- H4: Connections deliver in order unless told otherwise, since MQTT
+-- requires messages on a topic to arrive in order [5.0 §4.6].
+testOrdering :: Assertion
+testOrdering = do
+  BridgeConf conns _ <- parseConfFile "test/ordering.conf"
+  assertEqual "ordering" [("ord", Ordered), ("plain", Ordered), ("unord", Unordered)]
+    [(n, ot) | (n, Conn _ ot _ _) <- Map.toList conns]
+
 tests :: [TestTree]
 tests = [
   testCase "example conf" testParser,
+  testCase "ordering" testOrdering,
   testGroup "delivery" DeliverySpec.tests
   ]
 

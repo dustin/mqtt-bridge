@@ -66,7 +66,9 @@ parseConn m = do
   where
     src = do
       w <- lexeme "conn" *> lexeme word
-      ot <- option Unordered (lexeme "ordered" $> Ordered)
+      -- Ordered by default, since MQTT requires messages on a topic to be
+      -- delivered in order [5.0 §4.6].
+      ot <- option Ordered (try (lexeme "ordered" $> Ordered) <|> try (lexeme "unordered" $> Unordered))
       when (w `Map.member` m) $ fail ("duplicate conn: " <> show w)
       ustr <- some (noneOf ['\n', ' '])
       let (Just u) = parseURI ustr
