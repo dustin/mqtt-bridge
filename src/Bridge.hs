@@ -174,7 +174,10 @@ subscribeSink (Sink n dests) = do
   m <- mcs
   logInfo $ mconcat ["subscribing ", lstr dests, " at ", lstr n]
   let filters = destFilters dests
-  subrv@(results, _) <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
+  -- QoS 1, not 2: an inbound QoS 1 message is acked once it's been
+  -- forwarded, so a restart redelivers it, but net-mqtt sends PUBREC for a
+  -- QoS 2 one before handing it over, so one caught in between is lost.
+  subrv@(results, _) <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS1,
                                                                       _noLocal=True,
                                                                       _retainHandling=SendOnSubscribeNew,
                                                                       _retainAsPublished=True}) | t <- filters] mempty

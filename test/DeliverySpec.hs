@@ -117,8 +117,22 @@ unit_subscribeRefused = withBridge' [] toDst $ \env _ srcB _ -> do
   (r, _) <- concurrently (try (runBridge env (subscribeSink (Sink "src" toDst)))) refuse
   either (\(_ :: SomeException) -> pure ()) (const $ assertFailure "subscribe failure ignored") r
 
+-- M1: Sinks subscribe at QoS 1, which is acked only once the message is
+-- forwarded, so a restart redelivers it.  (At QoS 2, net-mqtt sends PUBREC
+-- before the message is handed over, so one in between is lost.)
+unit_subscribesAtQoS1 :: Assertion
+unit_subscribesAtQoS1 = withBridge' [] toDst $ \env _ srcB _ -> do
+  let grant = nthWritten 1 srcB >>= \case
+        SubscribePkt (SubscribeRequest pid subs _) -> do
+          assertEqual "subscription QoS" [QoS1] [_subQoS o | (_, o) <- subs]
+          inject srcB (SubACKPkt (SubscribeResponse pid [Right QoS1] []))
+        x -> assertFailure ("expected a SUBSCRIBE, got " <> show x)
+  _ <- concurrently (runBridge env (subscribeSink (Sink "src" toDst))) grant
+  pure ()
+
 tests :: [TestTree]
 tests = [
+  testCase "subscribes at QoS 1" unit_subscribesAtQoS1,
   testCase "subscribe refused" unit_subscribeRefused,
   testCase "unconfigured source" unit_unconfiguredSource,
   testCase "destination error contained" unit_destinationErrorContained,

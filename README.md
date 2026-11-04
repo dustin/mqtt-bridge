@@ -21,3 +21,11 @@ subscriptions between runs.  MQTT gives a client no way to list them,
 so a filter removed from the config keeps delivering messages, which
 the bridge drops.  Run once with `session-expiry-interval=0` to start
 that conn's session over.
+
+## Delivery
+
+Messages are forwarded at least once: the bridge subscribes at QoS 1,
+so a message is acknowledged to its source only after it's been
+forwarded, and one caught by a restart is delivered again.  That means
+QoS 2 messages are forwarded at QoS 1, and a destination can see the
+occasional duplicate.
