@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
+  parseConfFile, parseConfText, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -78,13 +78,27 @@ parseConn m = do
       ot <- option Ordered (try (lexeme "ordered" $> Ordered) <|> try (lexeme "unordered" $> Unordered))
       when (w `Map.member` m) $ fail ("duplicate conn: " <> show w)
       ustr <- some (noneOf ['\n', ' '])
-      let (Just u) = parseURI ustr
+      u <- maybe (fail ("invalid URI: " <> show ustr)) pure (parseURI ustr)
       pure (w, ot, u)
 
     stuff = do
       k <- pack <$> lexeme (some (noneOf ['\n', ' ', '=']))
       v <- lexeme "=" *> lexeme L.decimal
-      pure (k,v)
+      case lookup k optionRanges of
+        Nothing -> fail ("unknown option: " <> show k)
+        Just ok -> if ok v then pure (k,v) else fail ("invalid value for " <> show k <> ": " <> show v)
+
+-- | The options a conn can have, and their valid values.  These go into
+-- CONNECT, where 0 isn't allowed for the maximums [5.0 §3.1.2.11].
+optionRanges :: [(Text, Int -> Bool)]
+optionRanges = [
+  ("session-expiry-interval", between' 0 4294967295),
+  ("topic-alias-maximum", between' 0 65535),
+  ("maximum-packet-size", between' 1 4294967295),
+  ("receive-maximum", between' 1 65535),
+  ("protocol", (`elem` [3, 5]))
+  ]
+  where between' lo hi v = v >= lo && v <= hi
 
 parseSink :: Map Text Conn -> Parser Sink
 parseSink conns = uncurry Sink <$> itemList src stuff
@@ -120,3 +134,7 @@ parseFile f s = readFile s >>= (either (fail . errorBundlePretty) pure . parse f
 
 parseConfFile :: String -> IO BridgeConf
 parseConfFile = parseFile parseBridgeConf
+
+-- | Parse a config from text, naming it for errors.
+parseConfText :: String -> Text -> Either String BridgeConf
+parseConfText n = either (Left . errorBundlePretty) Right . parse parseBridgeConf n
