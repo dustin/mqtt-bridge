@@ -5,7 +5,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module Bridge (
-  Env(..), Bridge, Metrics(..), destFilters, connectMQTT, copyMsg, subscribeSink, mcs,
+  Env(..), Bridge, Metrics(..), destFilters, connectMQTT, copyMsg, subscribeSink, mcs, fitTo,
   raceABunch_, logAt, logInfo, logDbg, logErr, lstr
   ) where
 
@@ -19,11 +19,11 @@ import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
-import           Data.Text                (Text, pack)
+import           Data.Text                (Text, pack, unpack)
 import qualified Data.Text.Encoding       as TE
 import           Network.MQTT.Client
 import           Network.MQTT.Topic       (Filter, match, mkTopic, unTopic)
-import           Network.MQTT.Types       (PublishRequest (..), RetainHandling (..))
+import           Network.MQTT.Types       (MQTTPkt (..), PublishRequest (..), RetainHandling (..), toByteString)
 import           Network.URI
 import           System.Remote.Counter    (Counter, inc)
 import           UnliftIO.Async           (async, waitAnyCancel)
@@ -130,10 +130,14 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
       dt <- maybe (fail ("no destination topic for " <> show topic)) pure dtopic
       logDbg $ mconcat ["Delivering ", unTopic topic, rewritten dt,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]
+      sp <- liftIO $ svrProps mc
+      PublishRequest{_pubBody=ob, _pubRetain=orr, _pubQoS=oq, _pubProps=op} <- either (fail . unpack) pure $
+        fitTo sp PublishRequest{_pubTopic=BL.fromStrict (TE.encodeUtf8 (unTopic dt)),
+                                _pubProps=filter cleanProps _pubProps, ..}
       Metrics{destCounters} <- asks metrics
       liftIO $ do
         inc (destCounters Map.! d)
-        pubAliased mc dt _pubBody _pubRetain _pubQoS (filter cleanProps _pubProps)
+        pubAliased mc dt ob orr oq op
 
         where
           cleanProps (PropTopicAlias _) = False
@@ -141,6 +145,22 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
           rewritten dtopic'
             | topic == dtopic' = ""
             | otherwise        = " as " <> lstr dtopic'
+
+-- | Fit a PUBLISH to a destination's CONNACK properties: its QoS is at
+-- most the Maximum QoS [MQTT-3.2.2-11], it's not retained if retain isn't
+-- available [MQTT-3.2.2-14], and it's not sent at all if it's bigger than
+-- the Maximum Packet Size [MQTT-3.2.2-15].
+fitTo :: [Property] -> PublishRequest -> Either Text PublishRequest
+fitTo props p
+  | tooBig = Left ("message too big for the destination (" <> pack (show size) <> " bytes)")
+  | otherwise = Right fitted
+  where
+    fitted = p{_pubQoS=min (_pubQoS p) maxQoS, _pubRetain=_pubRetain p && retainOK}
+    maxQoS = last (QoS2 : [if q == 0 then QoS0 else QoS1 | PropMaximumQoS q <- props, q < 2])
+    retainOK = 0 `notElem` [r | PropRetainAvailable r <- props]
+    -- Measured with the full topic, though an alias may make it smaller.
+    size = BL.length (toByteString Protocol50 (PublishPkt fitted))
+    tooBig = any (\m -> size > fromIntegral m) [m | PropMaximumPacketSize m <- props]
 
 raceABunch_ :: (MonadUnliftIO m, MonadLogger m) => [m a] -> m ()
 raceABunch_ is = mapM async is >>= void.waitAnyCancel
