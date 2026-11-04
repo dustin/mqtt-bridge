@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, parseConfText, connWarnings, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
+  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -11,6 +11,7 @@ import           Data.Functor               (($>))
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack, unpack)
+import qualified Data.Text                  as T
 import           Data.Void                  (Void)
 import           Text.Megaparsec            (Parsec, between, eof, noneOf, option, parse, some, try)
 import           Text.Megaparsec.Char       (alphaNumChar, space1)
@@ -91,6 +92,41 @@ parseConn m = do
       case lookup k optionRanges of
         Nothing -> fail ("unknown option: " <> show k)
         Just ok -> if ok v then pure (k,v) else fail ("invalid value for " <> show k <> ": " <> show v)
+
+-- | Things worth warning about in a config.
+confWarnings :: BridgeConf -> [Text]
+confWarnings (BridgeConf conns sinks) = concatMap connWarnings (Map.elems conns) <> echoes <> unretained
+  where
+    is311 n = maybe False (\(Conn _ _ _ o) -> Map.lookup "protocol" o == Just 3) (Map.lookup n conns)
+    filtersAt n = [f | Sink s ds <- sinks, s == n, Dest f _ _ <- ds]
+    -- 3.1.1 has no No Local, so a 3.1.1 conn sends the bridge back what
+    -- it forwards there, if it's also syncing an overlapping filter
+    -- (forever, if the other end is 3.1.1 too).
+    echoes = [ "messages forwarded from " <> s <> " to " <> d <> " on " <> unFilter f
+               <> " come back, since 3.1.1 has no No Local"
+             | Sink s ds <- sinks, Dest f0 d tf <- ds, is311 d,
+               let f = forwarded f0 tf, any (filtersOverlap f) (filtersAt d) ]
+    -- ...and no Retain As Published, so live messages arrive unretained.
+    unretained = [ "messages from " <> s <> " lose their retain flag, since 3.1.1 has no Retain As Published"
+                 | Sink s _ <- sinks, is311 s ]
+    forwarded f (TransFun "rewrite" fn) = maybe f toFilter (fn "")
+    forwarded f _                       = f
+
+-- | Whether some topic matches both filters.
+filtersOverlap :: Filter -> Filter -> Bool
+filtersOverlap a b = case (levels a, levels b) of
+  -- A wildcard at the start doesn't match a $ topic [MQTT-4.7.2-1].
+  (x:_, y:_) | dollarVsWild x y || dollarVsWild y x -> False
+  (xs, ys) -> go xs ys
+  where
+    levels = T.splitOn "/" . unFilter
+    dollarVsWild x y = "$" `T.isPrefixOf` x && y `elem` ["+", "#"]
+    go ("#":_) _          = True
+    go _ ("#":_)          = True
+    go [] []              = True
+    go (x:xs) (y:ys)
+      | x == "+" || y == "+" || x == y = go xs ys
+    go _ _                = False
 
 -- | Things worth warning about in a conn's settings.
 connWarnings :: Conn -> [Text]

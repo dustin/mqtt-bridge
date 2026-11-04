@@ -46,7 +46,7 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   fullConf@(BridgeConf conns sinks) <- liftIO (parseConfFile optConfFile)
 
   mets <- liftIO $ makeMetrics metricServer fullConf
-  mapM_ (logAt LevelWarn) (concatMap connWarnings (Map.elems conns))
+  mapM_ (logAt LevelWarn) (confWarnings fullConf)
   cmtv <- liftIO $ newTVarIO mempty
   let env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets
   flip runReaderT env $ do

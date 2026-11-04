@@ -8,6 +8,7 @@ import           Test.Tasty.HUnit
 import           Control.Exception  (IOException, try)
 import qualified Data.Map.Strict    as Map
 import           Data.Text          (Text)
+import qualified Data.Text          as T
 import           Network.MQTT.Topic
 import           Network.URI        (parseURI)
 
@@ -85,6 +86,35 @@ testPacketSizeWarning = do
   let Right (BridgeConf conns' _) = parseConfText "nowarn" (confWith "conn a mqtt://localhost/\n     maximum-packet-size=1000000")
   assertBool "explicit packet size not warned about" (null . connWarnings $ conns' Map.! "a")
 
+-- H1: 3.1.1 has no No Local, so forwards to a 3.1.1 conn that also syncs
+-- an overlapping filter come back, and no Retain As Published, so its
+-- live messages arrive unretained.
+testFiltersOverlap :: Assertion
+testFiltersOverlap = do
+  let o a b = filtersOverlap a b && filtersOverlap b a
+  assertBool "x/# and x/y" (o "x/#" "x/y")
+  assertBool "x/# and x" (o "x/#" "x")
+  assertBool "+/y and x/+" (o "+/y" "x/+")
+  assertBool "# and anything" (o "#" "a/b/c")
+  assertBool "x/y and x/z" (not (o "x/y" "x/z"))
+  assertBool "x/+ and x/y/z" (not (o "x/+" "x/y/z"))
+  assertBool "+ and $SYS" (not (o "+" "$SYS"))
+
+confWarned :: Text -> Int
+confWarned c = either (const (-1)) (length . filter (not . T.isInfixOf "maximum-packet-size") . confWarnings) $
+  parseConfText "h1" c
+
+testProtocol311Warnings :: Assertion
+testProtocol311Warnings = do
+  let conf p g = T.unlines ["conn a mqtt://a/", "     maximum-packet-size=1000",
+                            "conn b mqtt://b/", "     maximum-packet-size=1000", "     protocol=" <> p,
+                            "from a", "     sync \"x/#\" -> b", "from b", "     sync \"" <> g <> "\" -> a"]
+  -- b echoes a's forwards back, and its messages aren't retained.
+  assertEqual "3.1.1, overlapping" 2 (confWarned (conf "3" "x/y"))
+  -- Only the retain warning.
+  assertEqual "3.1.1, separate" 1 (confWarned (conf "3" "z/#"))
+  assertEqual "5.0" 0 (confWarned (conf "5" "x/y"))
+
 tests :: [TestTree]
 tests = [
   testCase "example conf" testParser,
@@ -92,6 +122,8 @@ tests = [
   testCase "duplicate from" testDuplicateFrom,
   testGroup "bad config" badConfs,
   testCase "packet size warning" testPacketSizeWarning,
+  testCase "filters overlap" testFiltersOverlap,
+  testCase "3.1.1 warnings" testProtocol311Warnings,
   testGroup "shipped configs" shippedConfs,
   testGroup "delivery" DeliverySpec.tests
   ]
