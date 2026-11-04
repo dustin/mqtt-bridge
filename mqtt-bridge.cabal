@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 20e185b5300a17d2757dcdb49378f1c4b3b186150bd628bdbd56375a5011c6eb
+-- hash: 2cbff11560a1c71e59384c550f62d80cd571ca5c4ef82fc072c36ffe02858c15
 
 name:           mqtt-bridge
 version:        0.1.0.0
@@ -44,7 +44,7 @@ library
     , megaparsec
     , monad-logger
     , mtl
-    , net-mqtt >=0.8.7.0 && <0.9
+    , net-mqtt >=0.8.7.1 && <0.9
     , network-uri
     , optparse-applicative
     , stm
@@ -74,7 +74,7 @@ executable mqtt-bridge
     , monad-logger
     , mqtt-bridge
     , mtl
-    , net-mqtt >=0.8.7.0 && <0.9
+    , net-mqtt >=0.8.7.1 && <0.9
     , network-uri
     , optparse-applicative
     , stm
@@ -110,7 +110,7 @@ test-suite influxer-test
     , monad-logger
     , mqtt-bridge
     , mtl
-    , net-mqtt >=0.8.7.0 && <0.9
+    , net-mqtt >=0.8.7.1 && <0.9
     , network-uri
     , optparse-applicative
     , stm

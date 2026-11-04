@@ -6,8 +6,8 @@ let
       # Newer than nixpkgs has.
       net-mqtt = haskell.lib.dontCheck (self.callHackageDirect {
         pkg = "net-mqtt";
-        ver = "0.8.7.0";
-        sha256 = "07ng8mmqc4v01dg4jzkxy6s08gf536jzakdpf7yp8kwdw6raplyd";
+        ver = "0.8.7.1";
+        sha256 = "0rqbw6q793nfxds25ng50b2dn11vj4niwhyc6gk4iw1q2k7rf7if";
       } { });
     };
   };
