@@ -27,7 +27,7 @@ import           Network.MQTT.Types       (MQTTPkt (..), PublishRequest (..), Re
 import           Network.URI
 import           System.Remote.Counter    (Counter, inc)
 import           UnliftIO.Async           (async, waitAnyCancel)
-import           UnliftIO.Exception       (SomeException, tryAny)
+import           UnliftIO.Exception       (SomeException, throwIO, tryAny)
 
 import           BridgeConf
 
@@ -118,17 +118,27 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
       mapM_ (contained topic) dests
 
   where
-    -- A failure delivering to one destination (e.g. it refuses the
-    -- message, or it's disconnected) is logged and counted, and doesn't
-    -- escape into the source connection.
+    -- A destination refusing a message (or its being unsendable, e.g. too
+    -- big) is logged and counted, and doesn't escape into the source
+    -- connection: it would fail the same way every time, so retrying would
+    -- only crash-loop the bridge.  But if the destination's gone, a QoS 1
+    -- or 2 message is failed rather than acked, so the source redelivers
+    -- it (ending the source connection, and so the bridge, until it's
+    -- restarted).  A QoS 0 one can't be redelivered, so it's dropped.
     contained :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
     contained topic (d, f) = tryAny (deliver topic (d, f)) >>= either (failed topic d) pure
 
     failed :: Topic -> Server -> SomeException -> Bridge ()
     failed topic d e = do
-      Metrics{errCounters} <- asks metrics
-      liftIO $ mapM_ inc (Map.lookup d errCounters)
-      logErr $ mconcat ["Failed to deliver ", unTopic topic, " to ", lstr d, ": ", lstr e]
+      up <- maybe (pure False) (liftIO . isConnected) . Map.lookup d =<< mcs
+      if not up && _pubQoS > QoS0
+        then do
+          logErr $ mconcat ["Lost ", lstr d, " delivering ", unTopic topic, ", so not acking it: ", lstr e]
+          throwIO e
+        else do
+          Metrics{errCounters} <- asks metrics
+          liftIO $ mapM_ inc (Map.lookup d errCounters)
+          logErr $ mconcat ["Failed to deliver ", unTopic topic, " to ", lstr d, ": ", lstr e]
 
     deliver :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
     deliver topic (d,f) = do

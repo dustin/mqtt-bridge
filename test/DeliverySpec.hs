@@ -140,8 +140,26 @@ unit_coveredFiltersCollapsed = do
   -- A wildcard first level doesn't cover a $ topic [MQTT-4.7.2-1].
   assertEqual "$ topics" ["#", "$SYS/x"] (destFilters (map d ["#", "$SYS/x"]))
 
+-- N1: A QoS 1 message that couldn't be delivered because the destination's
+-- gone isn't acked to the source, so it's redelivered.  (A destination
+-- refusing it is different: that's acked and dropped, above.)
+unit_lostDestinationNotAcked :: Assertion
+unit_lostDestinationNotAcked = withBridge [] toDst $ \env src _ -> do
+  dst <- (Map.! "dst") <$> readTVarIO (conns env)
+  stopClient dst
+  forward env src (pub QoS1) >>= either (const (pure ())) (const $ assertFailure "delivered to a lost destination")
+
+-- ...but a QoS 0 one can't be redelivered, so it's just dropped.
+unit_lostDestinationQoS0 :: Assertion
+unit_lostDestinationQoS0 = withBridge [] toDst $ \env src _ -> do
+  dst <- (Map.! "dst") <$> readTVarIO (conns env)
+  stopClient dst
+  forward env src (pub QoS0) >>= either (\e -> assertFailure ("failed: " <> show e)) pure
+
 tests :: [TestTree]
 tests = [
+  testCase "lost destination not acked" unit_lostDestinationNotAcked,
+  testCase "lost destination, QoS 0" unit_lostDestinationQoS0,
   testCase "covered filters collapsed" unit_coveredFiltersCollapsed,
   testCase "subscribes at QoS 1" unit_subscribesAtQoS1,
   testCase "subscribe refused" unit_subscribeRefused,
