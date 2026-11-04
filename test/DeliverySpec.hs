@@ -130,8 +130,19 @@ unit_subscribesAtQoS1 = withBridge' [] toDst $ \env _ srcB _ -> do
   _ <- concurrently (runBridge env (subscribeSink (Sink "src" toDst))) grant
   pure ()
 
+-- M3: A filter another one in the sink covers isn't subscribed too, since
+-- the broker may deliver a copy per matching subscription, and each copy
+-- would be forwarded.
+unit_coveredFiltersCollapsed :: Assertion
+unit_coveredFiltersCollapsed = do
+  let d f = Dest f "dst" (TransFun "id" mkTopic)
+  assertEqual "subscribed" ["+/z", "a/#", "x/+"] (destFilters (map d ["a/#", "a/b", "a/b/#", "x/+", "x/y", "+/z", "a/#"]))
+  -- A wildcard first level doesn't cover a $ topic [MQTT-4.7.2-1].
+  assertEqual "$ topics" ["#", "$SYS/x"] (destFilters (map d ["#", "$SYS/x"]))
+
 tests :: [TestTree]
 tests = [
+  testCase "covered filters collapsed" unit_coveredFiltersCollapsed,
   testCase "subscribes at QoS 1" unit_subscribesAtQoS1,
   testCase "subscribe refused" unit_subscribeRefused,
   testCase "unconfigured source" unit_unconfiguredSource,

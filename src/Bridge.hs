@@ -31,8 +31,13 @@ import           UnliftIO.Exception       (SomeException, tryAny)
 
 import           BridgeConf
 
+-- | The filters to subscribe to for some destinations.  One that another
+-- covers is left out, since the broker may deliver a copy of a message per
+-- matching subscription, and each would be forwarded.  (Filters that only
+-- partly overlap, like x/+ and +/y, can still both match.)
 destFilters :: [Dest] -> [Filter]
-destFilters = Set.toList . Set.fromList . map (\(Dest t _ _) -> t)
+destFilters ds = [f | f <- fs, not (any (\g -> g /= f && filterCovers g f) fs)]
+  where fs = Set.toList . Set.fromList $ map (\(Dest t _ _) -> t) ds
 
 data Env = Env {
   conns   :: TVar (Map Server MQTTClient),

@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
+  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, filterCovers, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -126,6 +126,20 @@ filtersOverlap a b = case (levels a, levels b) of
     go [] []              = True
     go (x:xs) (y:ys)
       | x == "+" || y == "+" || x == y = go xs ys
+    go _ _                = False
+
+-- | Whether every topic the second filter matches, the first matches too.
+filterCovers :: Filter -> Filter -> Bool
+filterCovers a b = case (levels a, levels b) of
+  -- A wildcard at the start doesn't match a $ topic [MQTT-4.7.2-1].
+  (x:_, y:_) | x `elem` ["+", "#"] && "$" `T.isPrefixOf` y -> False
+  (xs, ys) -> go xs ys
+  where
+    levels = T.splitOn "/" . unFilter
+    go ["#"] _            = True
+    go [] []              = True
+    go (x:xs) (y:ys)
+      | x == y || (x == "+" && y /= "#") = go xs ys
     go _ _                = False
 
 -- | Things worth warning about in a conn's settings.
