@@ -17,8 +17,8 @@ import qualified DeliverySpec
 testParser :: Assertion
 testParser = do
   cfg <- parseConfFile "test/test.conf"
-  let (Just u1) = parseURI "mqtt://localhost/"
-      (Just u2) = parseURI "ws://test.mosquitto.org:8080/"
+  let (Just u1) = parseURI "mqtt://localhost/#bridge"
+      (Just u2) = parseURI "ws://test.mosquitto.org:8080/#bridge"
   assertEqual "" (BridgeConf
                   (Map.fromList
                   [("local", Conn "local" Ordered u1
@@ -70,8 +70,20 @@ badConfs = [
   rejected "receive maximum too big" "conn a mqtt://localhost/\n     receive-maximum=65536",
   rejected "maximum packet size 0" "conn a mqtt://localhost/\n     maximum-packet-size=0",
   rejected "topic alias maximum too big" "conn a mqtt://localhost/\n     topic-alias-maximum=70000",
-  rejected "session expiry too big" "conn a mqtt://localhost/\n     session-expiry-interval=4294967296"
+  rejected "session expiry too big" "conn a mqtt://localhost/\n     session-expiry-interval=4294967296",
+  -- M7: A persistent session needs a client ID to come back to.
+  rejected "persistent session without client ID" "conn a mqtt://localhost/\n     session-expiry-interval=60"
   ]
+
+-- M7: The default Maximum Packet Size gets a warning, since the source
+-- drops anything bigger without saying so.
+testPacketSizeWarning :: Assertion
+testPacketSizeWarning = do
+  let Right (BridgeConf conns _) = parseConfText "warn" (confWith "conn a mqtt://localhost/\n     receive-maximum=10")
+      warned n = not . null . connWarnings $ conns Map.! n
+  assertBool "default packet size warned about" (warned "a")
+  let Right (BridgeConf conns' _) = parseConfText "nowarn" (confWith "conn a mqtt://localhost/\n     maximum-packet-size=1000000")
+  assertBool "explicit packet size not warned about" (null . connWarnings $ conns' Map.! "a")
 
 tests :: [TestTree]
 tests = [
@@ -79,6 +91,7 @@ tests = [
   testCase "ordering" testOrdering,
   testCase "duplicate from" testDuplicateFrom,
   testGroup "bad config" badConfs,
+  testCase "packet size warning" testPacketSizeWarning,
   testGroup "shipped configs" shippedConfs,
   testGroup "delivery" DeliverySpec.tests
   ]

@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, parseConfText, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
+  parseConfFile, parseConfText, connWarnings, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -10,7 +10,7 @@ import           Control.Monad              (when)
 import           Data.Functor               (($>))
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
-import           Data.Text                  (Text, pack)
+import           Data.Text                  (Text, pack, unpack)
 import           Data.Void                  (Void)
 import           Text.Megaparsec            (Parsec, between, eof, noneOf, option, parse, some, try)
 import           Text.Megaparsec.Char       (alphaNumChar, space1)
@@ -68,6 +68,10 @@ word = pack <$> some alphaNumChar
 parseConn :: Map Text Conn -> Parser (Map Text Conn)
 parseConn m = do
   ((n, ot, url), opts) <- itemList src stuff
+  -- A session can only be resumed under the same client ID, so a
+  -- persistent one needs it set (as the URI fragment).
+  when (maybe False (> 0) (lookup "session-expiry-interval" opts) && null (drop 1 (uriFragment url))) $
+    fail ("conn " <> show n <> " has a session expiry but no client ID (e.g. " <> show (show url <> "#" <> unpack n) <> ")")
   pure $ Map.insert n (Conn n ot url (Map.fromList opts)) m
 
   where
@@ -87,6 +91,12 @@ parseConn m = do
       case lookup k optionRanges of
         Nothing -> fail ("unknown option: " <> show k)
         Just ok -> if ok v then pure (k,v) else fail ("invalid value for " <> show k <> ": " <> show v)
+
+-- | Things worth warning about in a conn's settings.
+connWarnings :: Conn -> [Text]
+connWarnings (Conn n _ _ opts) =
+  [ "conn " <> n <> " uses the default maximum-packet-size of 65536; the broker drops bigger messages for it without saying so"
+  | Map.notMember "maximum-packet-size" opts ]
 
 -- | The options a conn can have, and their valid values.  These go into
 -- CONNECT, where 0 isn't allowed for the maximums [5.0 §3.1.2.11].
