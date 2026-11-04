@@ -1,7 +1,16 @@
 { pkgs ? import <nixpkgs> { } }:
 with pkgs;
 let
-  hpkgs = haskellPackages;
+  hpkgs = haskellPackages.override {
+    overrides = self: super: {
+      # Newer than nixpkgs has.
+      net-mqtt = haskell.lib.dontCheck (self.callHackageDirect {
+        pkg = "net-mqtt";
+        ver = "0.8.7.0";
+        sha256 = "07ng8mmqc4v01dg4jzkxy6s08gf536jzakdpf7yp8kwdw6raplyd";
+      } { });
+    };
+  };
   ghcWithDeps = hpkgs.ghcWithPackages (p: with p; [
     async
     bytestring
