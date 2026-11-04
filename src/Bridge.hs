@@ -103,10 +103,13 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
   Metrics{srcCounters} <- asks metrics
 
   liftIO $ inc (srcCounters Map.! n)
-  case (mkTopic . TE.decodeUtf8 . BL.toStrict) _pubTopic of
-    Nothing -> logErr $ mconcat ["Dropping a message from ", lstr n, " with an invalid topic: ", lstr _pubTopic]
-    Just topic -> do
-      let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) (dm Map.! n)
+  case ((mkTopic . TE.decodeUtf8 . BL.toStrict) _pubTopic, Map.lookup n dm) of
+    (Nothing, _) -> logErr $ mconcat ["Dropping a message from ", lstr n, " with an invalid topic: ", lstr _pubTopic]
+    -- No from block for this conn, so it's from a subscription that's no
+    -- longer configured (a resumed session's).
+    (Just topic, Nothing) -> logDbg $ mconcat ["Dropping ", unTopic topic, " from ", lstr n, ", which has nothing to sync"]
+    (Just topic, Just ds) -> do
+      let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) ds
       mapM_ (contained topic) dests
 
   where

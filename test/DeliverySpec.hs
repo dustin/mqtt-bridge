@@ -4,7 +4,7 @@
 
 module DeliverySpec (tests) where
 
-import           Control.Concurrent.STM (newTVarIO)
+import           Control.Concurrent.STM (newTVarIO, readTVarIO)
 import           Control.Concurrent.Async (concurrently)
 import           Control.Exception      (SomeException, try)
 import qualified Data.ByteString.Lazy   as BL
@@ -93,8 +93,17 @@ unit_maximumPacketSize = withBridge [PropMaximumPacketSize 100] toDst $ \env src
     PublishPkt PublishRequest{_pubBody} -> assertEqual "first forwarded" "small" _pubBody
     x -> assertFailure ("expected a PUBLISH, got " <> show x)
 
+-- M4: A message on a connection with no from block (e.g. from a resumed
+-- session's old subscriptions) is dropped, not a crash.
+unit_unconfiguredSource :: Assertion
+unit_unconfiguredSource = withBridge [] toDst $ \env _ _ -> do
+  dst <- (Map.! "dst") <$> readTVarIO (conns env)
+  r <- try $ copyMsg "dst" (runBridge env) dst (pub QoS0)
+  either (\e -> assertFailure ("crashed: " <> show (e :: SomeException))) pure r
+
 tests :: [TestTree]
 tests = [
+  testCase "unconfigured source" unit_unconfiguredSource,
   testCase "destination error contained" unit_destinationErrorContained,
   testCase "maximum QoS" unit_maximumQoS,
   testCase "retain available" unit_retainAvailable,

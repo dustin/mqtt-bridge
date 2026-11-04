@@ -1,8 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
+import           Control.Exception  (IOException, try)
 import qualified Data.Map.Strict    as Map
 import           Network.MQTT.Topic
 import           Network.URI        (parseURI)
@@ -37,10 +40,18 @@ testOrdering = do
   assertEqual "ordering" [("ord", Ordered), ("plain", Ordered), ("unord", Unordered)]
     [(n, ot) | (n, Conn _ ot _ _) <- Map.toList conns]
 
+-- M4: Two from blocks for one conn would both subscribe, but only one
+-- would be used, so the config is rejected.
+testDuplicateFrom :: Assertion
+testDuplicateFrom = try (parseConfFile "test/dupfrom.conf") >>= \case
+  Left (_ :: IOException) -> pure ()
+  Right c -> assertFailure ("parsed: " <> show c)
+
 tests :: [TestTree]
 tests = [
   testCase "example conf" testParser,
   testCase "ordering" testOrdering,
+  testCase "duplicate from" testDuplicateFrom,
   testGroup "delivery" DeliverySpec.tests
   ]
 

@@ -51,7 +51,14 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
 parseBridgeConf :: Parser BridgeConf
-parseBridgeConf = conns mempty >>= \cs -> BridgeConf cs <$> some (parseSink cs) <* eof
+parseBridgeConf = do
+  cs <- conns mempty
+  sinks <- some (parseSink cs) <* eof
+  -- Each from block subscribes, but a conn's messages only go to one, so
+  -- more than one for a conn would quietly drop the others' traffic.
+  case [n | (n, k) <- Map.toList (Map.fromListWith (+) [(n, 1 :: Int) | Sink n _ <- sinks]), k > 1] of
+    []   -> pure (BridgeConf cs sinks)
+    dups -> fail ("more than one from block for " <> show dups)
   where
     conns m = maybe (pure m) (conns . (<>m)) =<< option Nothing (Just <$> lexeme (parseConn m))
 

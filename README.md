@@ -13,3 +13,11 @@ requires for messages on a topic.  `conn name unordered url` handles
 each message on its own thread instead, which is faster but can
 reorder them, including leaving a stale retained value at the
 destination.
+
+## Persistent sessions
+
+With `session-expiry-interval` above 0, the broker keeps a conn's
+subscriptions between runs.  MQTT gives a client no way to list them,
+so a filter removed from the config keeps delivering messages, which
+the bridge drops.  Run once with `session-expiry-interval=0` to start
+that conn's session over.
