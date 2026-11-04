@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE NamedFieldPuns    #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module DeliverySpec (tests) where
 
@@ -25,7 +26,11 @@ import           FakeBroker
 -- | A bridge from "src" to "dst" for the given filters, with clients
 -- connected to fake brokers.
 withBridge :: [Property] -> [Dest] -> (Env -> MQTTClient -> FakeBroker -> IO a) -> IO a
-withBridge dstProps ds f = do
+withBridge dstProps ds f = withBridge' dstProps ds (\env src _ dstB -> f env src dstB)
+
+-- | withBridge, with the source's fake broker too.
+withBridge' :: [Property] -> [Dest] -> (Env -> MQTTClient -> FakeBroker -> FakeBroker -> IO a) -> IO a
+withBridge' dstProps ds f = do
   srcB <- fakeBroker []
   dstB <- fakeBroker dstProps
   src <- connectFake srcB
@@ -34,7 +39,7 @@ withBridge dstProps ds f = do
   let names = ["src", "dst"]
       counters = Map.fromList <$> traverse (\n -> (,) n <$> Counter.new) names
   mets <- Metrics <$> counters <*> counters <*> counters
-  f (Env cv (Map.singleton "src" ds) mets) src dstB
+  f (Env cv (Map.singleton "src" ds) mets) src srcB dstB
 
 pub :: QoS -> PublishRequest
 pub q = PublishRequest{_pubDup=False, _pubQoS=q, _pubPktID=1, _pubRetain=False,
@@ -101,8 +106,20 @@ unit_unconfiguredSource = withBridge [] toDst $ \env _ _ -> do
   r <- try $ copyMsg "dst" (runBridge env) dst (pub QoS0)
   either (\e -> assertFailure ("crashed: " <> show (e :: SomeException))) pure r
 
+-- M5: A filter the source refuses fails startup, rather than leaving the
+-- bridge running without it.
+unit_subscribeRefused :: Assertion
+unit_subscribeRefused = withBridge' [] toDst $ \env _ srcB _ -> do
+  let refuse = nthWritten 1 srcB >>= \case
+        SubscribePkt (SubscribeRequest pid _ _) ->
+          inject srcB (SubACKPkt (SubscribeResponse pid [Left SubErrNotAuthorized] []))
+        x -> assertFailure ("expected a SUBSCRIBE, got " <> show x)
+  (r, _) <- concurrently (try (runBridge env (subscribeSink (Sink "src" toDst)))) refuse
+  either (\(_ :: SomeException) -> pure ()) (const $ assertFailure "subscribe failure ignored") r
+
 tests :: [TestTree]
 tests = [
+  testCase "subscribe refused" unit_subscribeRefused,
   testCase "unconfigured source" unit_unconfiguredSource,
   testCase "destination error contained" unit_destinationErrorContained,
   testCase "maximum QoS" unit_maximumQoS,

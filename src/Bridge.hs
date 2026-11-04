@@ -173,8 +173,15 @@ subscribeSink :: Sink -> Bridge ()
 subscribeSink (Sink n dests) = do
   m <- mcs
   logInfo $ mconcat ["subscribing ", lstr dests, " at ", lstr n]
-  subrv <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
-                                                         _noLocal=True,
-                                                         _retainHandling=SendOnSubscribeNew,
-                                                         _retainAsPublished=True}) | t <- destFilters dests] mempty
+  let filters = destFilters dests
+  subrv@(results, _) <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS2,
+                                                                      _noLocal=True,
+                                                                      _retainHandling=SendOnSubscribeNew,
+                                                                      _retainAsPublished=True}) | t <- filters] mempty
   logInfo $ mconcat ["Sub response from ", lstr n, ": ", lstr subrv]
+  -- A refused filter would leave the bridge running without it.
+  case [(f, e) | (f, Left e) <- zip filters results] of
+    [] -> pure ()
+    refused -> do
+      logErr $ mconcat [lstr n, " refused subscriptions: ", lstr refused]
+      fail ("subscriptions refused at " <> unpack n <> ": " <> show refused)
