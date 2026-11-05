@@ -212,8 +212,8 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
       Metrics{destCounters} <- asks metrics
       ss <- asks stats
       liftIO $ do
-        inc (destCounters Map.! d)
         either (fail . unpack) pure =<< sendFitted mc dt PublishRequest{_pubProps=filter cleanProps _pubProps, ..}
+        inc (destCounters Map.! d)
         incrementStat (StatMsgSent d) 1 ss
 
         where

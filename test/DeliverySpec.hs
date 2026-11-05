@@ -262,6 +262,14 @@ unit_subscribesWithIdentifiers = withBridge' [] ds $ \env _ srcB _ -> do
   assertEqual "subscriptions" [(["+/y"], [PropSubscriptionIdentifier 1]), (["x/+"], [PropSubscriptionIdentifier 2])] got
   where ds = [Dest f "dst" (TransFun "id" mkTopic) | f <- ["x/+", "+/y"]]
 
+-- #8: The EKG counter agrees with messages/sent when a send fails.
+unit_failedDeliveryCounter :: Assertion
+unit_failedDeliveryCounter = withBridge [] toDst $ \env src dstB -> do
+  _ <- forwardAcked env src dstB 1 0x87
+  assertEqual "to counter" 0 =<< Counter.read (destCounters (metrics env) Map.! "dst")
+  _ <- forwardAcked env src dstB 2 0
+  assertEqual "to counter" 1 =<< Counter.read (destCounters (metrics env) Map.! "dst")
+
 tests :: [TestTree]
 tests = [
   testCase "alias counted in packet size" unit_aliasCounted,
@@ -270,6 +278,7 @@ tests = [
   testCase "subscription identifier stripped" unit_subscriptionIdentifierStripped,
   testCase "subscription identifier routing" unit_subscriptionIdentifierRouting,
   testCase "subscribes with identifiers" unit_subscribesWithIdentifiers,
+  testCase "failed delivery counter" unit_failedDeliveryCounter,
   testCase "publishes stats" unit_publishesStats,
   testCase "failed delivery stats" unit_failedDeliveryStats,
   testCase "delivery stats" unit_deliveryStats,
