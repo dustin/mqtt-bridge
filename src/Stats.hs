@@ -4,7 +4,7 @@
 -- | Counters collected without making message delivery wait for their
 -- aggregation, following mqttd's stats mechanism.
 module Stats (
-  StatKey(..), StatStore, statKeyName, newStatStore, applyStats, flushStats,
+  StatKey(..), StatStore, statKeyName, newStatStore, newStatStoreWithKeys, applyStats, flushStats,
   incrementStat, incrementStatSTM, retrieveStats
   ) where
 
@@ -38,7 +38,12 @@ data StatStore = StatStore {
   }
 
 newStatStore :: MonadIO m => m StatStore
-newStatStore = StatStore <$> newTBQueueIO 100 <*> newTVarIO mempty
+newStatStore = newStatStoreWithKeys []
+
+-- | Start with visible zero-valued counters, so they can be published before
+-- the first message arrives.
+newStatStoreWithKeys :: MonadIO m => [StatKey] -> m StatStore
+newStatStoreWithKeys ks = StatStore <$> newTBQueueIO 100 <*> newTVarIO (Map.fromList [(k, 0) | k <- ks])
 
 -- | Apply queued increments until cancelled.
 applyStats :: MonadIO m => StatStore -> m ()

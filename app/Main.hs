@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -6,7 +7,9 @@
 
 module Main where
 
-import           Control.Concurrent.STM   (atomically, newTVarIO, writeTVar)
+import           Control.Concurrent       (threadDelay)
+import           Control.Concurrent.STM   (atomically, modifyTVar', newTVarIO, readTVarIO, writeTVar)
+import           Control.Monad            (forever)
 import           Control.Monad.IO.Class   (MonadIO (..))
 import           Control.Monad.IO.Unlift  (withRunInIO)
 import           Control.Monad.Logger     (LogLevel (..), filterLogger, runStderrLoggingT)
@@ -19,6 +22,7 @@ import           Options.Applicative      (Parser, auto, execParser, fullDesc, h
                                            progDesc, short, showDefault, strOption, switch, value, (<**>))
 import qualified System.Remote.Monitoring as RM
 import           UnliftIO.Async           (mapConcurrently, mapConcurrently_)
+import           UnliftIO.Exception       (SomeAsyncException (..), finally, fromException, throwIO, tryAny)
 
 import           Bridge
 import           BridgeConf
@@ -52,22 +56,33 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   cmtv <- liftIO $ newTVarIO mempty
   let prefixes = Map.mapMaybe (\(Conn _ _ _ o) -> coStatPrefix o) conns
       env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets prefixes ss
-  flip runReaderT env $ do
-    mcs' <- Map.fromList <$> mapConcurrently connect (Map.elems conns)
-    liftIO . atomically $ writeTVar cmtv mcs'
-    mapConcurrently_ subscribeSink sinks
-    raceABunch_ $ [applyStats ss, statsPublisher] <> map (liftIO . waitForClient) (Map.elems mcs')
+      session = finally runSession cleanup
+      runSession = do
+        clients <- mapConcurrently connect (Map.elems conns)
+        mapConcurrently_ subscribeSink sinks
+        raceABunch_ $ [applyStats ss, statsPublisher] <> map (liftIO . waitForClient . snd) clients
+      cleanup = do
+        clients <- liftIO $ readTVarIO cmtv
+        liftIO $ mapM_ stopClient (Map.elems clients)
+        liftIO . atomically $ writeTVar cmtv mempty
+      connect (Conn n ot u o) = do
+        logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr o]
+        mc <- withRunInIO $ \unl -> do
+          mc <- connectMQTT ot u o (copyMsg n unl)
+          (ConnACKFlags sp _ props) <- connACK mc
+          unl . logInfo $ mconcat ["Connected to ", lstr u, " ", lstr sp,  " - server properties: ", lstr props]
+          pure mc
+        liftIO . atomically $ modifyTVar' cmtv (Map.insert n mc)
+        pure (n, mc)
+  flip runReaderT env $ forever $ do
+    tryAny session >>= \case
+      Right _ -> logInfo "A connection ended; reconnecting"
+      Left e -> case fromException e of
+        Just (SomeAsyncException _) -> throwIO e
+        Nothing -> logErr $ mconcat ["Bridge session failed: ", lstr e, "; reconnecting"]
+    liftIO $ threadDelay 1000000
 
   where
-    connect (Conn n ot u o) = do
-      logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr o]
-      mc <- withRunInIO $ \unl -> do
-        mc <- connectMQTT ot u o (copyMsg n unl)
-        (ConnACKFlags sp _ props) <- connACK mc
-        unl . logInfo $ mconcat ["Connected to ", lstr u, " ", lstr sp,  " - server properties: ", lstr props]
-        pure mc
-      pure (n, mc)
-
     makeMetrics :: RM.Server -> BridgeConf -> IO Metrics
     makeMetrics svr (BridgeConf conns _) = Metrics <$> counters "from" <*> counters "to" <*> counters "errors"
       where

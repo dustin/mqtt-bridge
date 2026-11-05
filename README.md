@@ -30,6 +30,11 @@ forwarded, and one caught by a restart is delivered again.  That means
 QoS 2 messages are forwarded at QoS 1, and a destination can see the
 occasional duplicate.
 
+If any connection ends, the bridge closes its remaining clients and reconnects
+after one second.  A QoS 1 or 2 message whose destination disappeared isn't
+acknowledged to its source, so a persistent source session redelivers it after
+reconnection.
+
 ## Stats
 
 Set `stat-prefix` on a connection to publish the bridge's counters to that

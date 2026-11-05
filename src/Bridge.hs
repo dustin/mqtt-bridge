@@ -151,8 +151,8 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
     -- connection: it would fail the same way every time, so retrying would
     -- only crash-loop the bridge.  But if the destination's gone, a QoS 1
     -- or 2 message is failed rather than acked, so the source redelivers
-    -- it (ending the source connection, and so the bridge, until it's
-    -- restarted).  A QoS 0 one can't be redelivered, so it's dropped.
+    -- it after the supervisor reconnects the bridge.  A QoS 0 one can't be
+    -- redelivered, so it's dropped.
     contained :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
     contained topic (d, f) = tryAny (deliver topic (d, f)) >>= either (failed topic d) pure
 
