@@ -1,0 +1,8 @@
+.git
+.jj
+.direnv
+dist-newstyle
+result
+result-*
+**/*.hi
+**/*.o

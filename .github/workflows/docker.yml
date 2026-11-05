@@ -37,5 +37,9 @@ jobs:
         platforms: linux/amd64
         tags: ${{ env.IMAGE }}:latest
         labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-        cache-from: type=registry,ref=${{ env.IMAGE }}:cache
-        cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:cache,mode=max', env.IMAGE) || '' }}
+        cache-from: |
+          type=registry,ref=${{ env.IMAGE }}:cache
+          type=gha,scope=mqtt-bridge
+        cache-to: |
+          type=gha,mode=max,scope=mqtt-bridge
+          ${{ github.event_name == 'push' && format('type=registry,ref={0}:cache,mode=max', env.IMAGE) || '' }}
