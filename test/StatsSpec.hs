@@ -23,6 +23,12 @@ testStatStore = do
   assertEqual "later increments add to the totals" (Just 9)
     . Map.lookup (StatMsgRcvd "src") =<< retrieveStats ss
 
+testInitialStats :: Assertion
+testInitialStats = do
+  ss <- newStatStoreWithKeys [StatMsgRcvd "src", StatMsgSent "dst"]
+  assertEqual "initial counters are visible zeroes"
+    (Map.fromList [(StatMsgRcvd "src", 0), (StatMsgSent "dst", 0)]) =<< retrieveStats ss
+
 testStatKeyName :: Assertion
 testStatKeyName =
   assertEqual "MQTT topic" "monitor/bridge/src/messages/failed"
@@ -30,6 +36,7 @@ testStatKeyName =
 
 tests :: [TestTree]
 tests = [
+  testCase "initial stats are zero" testInitialStats,
   testCase "stat store aggregates queued increments" testStatStore,
   testCase "stat key names" testStatKeyName
   ]

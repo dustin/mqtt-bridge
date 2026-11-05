@@ -51,7 +51,7 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   fullConf@(BridgeConf conns sinks) <- liftIO (parseConfFile optConfFile)
 
   mets <- liftIO $ makeMetrics metricServer fullConf
-  ss <- newStatStore
+  ss <- newStatStoreWithKeys [k n | n <- Map.keys conns, k <- [StatMsgRcvd, StatMsgSent, StatMsgFailed]]
   mapM_ (logAt LevelWarn) (confWarnings fullConf)
   cmtv <- liftIO $ newTVarIO mempty
   let prefixes = Map.mapMaybe (\(Conn _ _ _ o) -> coStatPrefix o) conns
