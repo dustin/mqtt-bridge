@@ -14,6 +14,7 @@ import           Network.URI        (parseURI)
 
 import           BridgeConf
 import qualified DeliverySpec
+import qualified StatsSpec
 
 testParser :: Assertion
 testParser = do
@@ -23,12 +24,12 @@ testParser = do
   assertEqual "" (BridgeConf
                   (Map.fromList
                   [("local", Conn "local" Ordered u1
-                     (Map.fromList [("maximum-packet-size",8192),
-                                    ("receive-maximum",64),
-                                    ("session-expiry-interval",1800),
-                                    ("topic-alias-maximum",4096)])),
-                   ("test", (Conn "test" Ordered u2
-                     (Map.fromList [("session-expiry-interval",187)])))])
+                     (mempty{coMaximumPacketSize=Just 8192,
+                             coReceiveMaximum=Just 64,
+                             coSessionExpiryInterval=Just 1800,
+                             coTopicAliasMaximum=Just 4096})),
+                   ("test", Conn "test" Ordered u2
+                     (mempty{coSessionExpiryInterval=Just 187}))])
                    [Sink "test" [Dest "VirtualTopic/#" "local" (TransFun "id" mkTopic),
                                  Dest "VirtualTopic/#" "local"
                                   (TransFun "rewrite" (const (Just "junkpile")))],
@@ -41,6 +42,15 @@ testOrdering = do
   BridgeConf conns _ <- parseConfFile "test/ordering.conf"
   assertEqual "ordering" [("ord", Ordered), ("plain", Ordered), ("unord", Unordered)]
     [(n, ot) | (n, Conn _ ot _ _) <- Map.toList conns]
+
+testStatPrefix :: Assertion
+testStatPrefix = case parseConfText "stat-prefix" conf of
+  Left e -> assertFailure e
+  Right (BridgeConf conns _) -> case conns Map.! "a" of
+    Conn _ _ _ opts -> assertEqual "last stat prefix wins" (Just "two") (coStatPrefix opts)
+  where
+    conf = T.unlines ["conn a mqtt://a/", "     stat-prefix=\"one\"", "     stat-prefix=\"two\"",
+                      "from a", "     sync \"x/#\" -> a"]
 
 -- M4: Two from blocks for one conn would both subscribe, but only one
 -- would be used, so the config is rejected.
@@ -66,6 +76,7 @@ badConfs :: [TestTree]
 badConfs = [
   rejected "invalid URI" "conn a not-a-uri",
   rejected "unknown option" "conn a mqtt://localhost/\n     session-expiry=1800",
+  rejected "invalid stat prefix" "conn a mqtt://localhost/\n     stat-prefix=\"stats/#\"",
   rejected "protocol" "conn a mqtt://localhost/\n     protocol=4",
   rejected "receive maximum 0" "conn a mqtt://localhost/\n     receive-maximum=0",
   rejected "receive maximum too big" "conn a mqtt://localhost/\n     receive-maximum=65536",
@@ -119,13 +130,15 @@ tests :: [TestTree]
 tests = [
   testCase "example conf" testParser,
   testCase "ordering" testOrdering,
+  testCase "stat prefix" testStatPrefix,
   testCase "duplicate from" testDuplicateFrom,
   testGroup "bad config" badConfs,
   testCase "packet size warning" testPacketSizeWarning,
   testCase "filters overlap" testFiltersOverlap,
   testCase "3.1.1 warnings" testProtocol311Warnings,
   testGroup "shipped configs" shippedConfs,
-  testGroup "delivery" DeliverySpec.tests
+  testGroup "delivery" DeliverySpec.tests,
+  testGroup "stats" StatsSpec.tests
   ]
 
 main :: IO ()

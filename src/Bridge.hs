@@ -6,11 +6,12 @@
 
 module Bridge (
   Env(..), Bridge, Metrics(..), destFilters, connectMQTT, copyMsg, subscribeSink, mcs, fitTo,
-  raceABunch_, logAt, logInfo, logDbg, logErr, lstr
+  publishStats, statsPublisher, raceABunch_, logAt, logInfo, logDbg, logErr, lstr
   ) where
 
+import           Control.Concurrent       (threadDelay)
 import           Control.Concurrent.STM   (TVar, atomically, readTVar, retry)
-import           Control.Monad            (void, when)
+import           Control.Monad            (forever, void, when)
 import           Control.Monad.IO.Class   (MonadIO (..))
 import           Control.Monad.IO.Unlift  (MonadUnliftIO)
 import           Control.Monad.Logger     (LogLevel (..), LoggingT, MonadLogger, logWithoutLoc)
@@ -18,6 +19,7 @@ import           Control.Monad.Reader     (ReaderT (..), asks)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
+import           Data.Maybe               (fromMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text, pack, unpack)
 import qualified Data.Text.Encoding       as TE
@@ -30,6 +32,7 @@ import           UnliftIO.Async           (async, waitAnyCancel)
 import           UnliftIO.Exception       (SomeException, throwIO, tryAny)
 
 import           BridgeConf
+import           Stats
 
 -- | The filters to subscribe to for some destinations.  One that another
 -- covers is left out, since the broker may deliver a copy of a message per
@@ -40,9 +43,11 @@ destFilters ds = [f | f <- fs, not (any (\g -> g /= f && filterCovers g f) fs)]
   where fs = Set.toList . Set.fromList $ map (\(Dest t _ _) -> t) ds
 
 data Env = Env {
-  conns   :: TVar (Map Server MQTTClient),
-  dests   :: Map Server [Dest],
-  metrics :: Metrics
+  conns        :: TVar (Map Server MQTTClient),
+  dests        :: Map Server [Dest],
+  metrics      :: Metrics,
+  statPrefixes :: Map Server Topic,
+  stats        :: StatStore
   }
 
 type Bridge = ReaderT Env (LoggingT IO)
@@ -69,25 +74,25 @@ logDbg = logAt LevelDebug
 lstr :: Show a => a -> Text
 lstr = pack . show
 
-connectMQTT :: OrderedType -> URI -> Map Text Int -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
-connectMQTT ot uri opts f =
-  connectURI mqttConfig{_cleanSession=opt "session-expiry-interval" 0 == (0::Int),
+connectMQTT :: OrderedType -> URI -> ConnOptions -> (MQTTClient -> PublishRequest -> IO ()) -> IO MQTTClient
+connectMQTT ot uri ConnOptions{..} f =
+  connectURI mqttConfig{_cleanSession=fromMaybe 0 coSessionExpiryInterval == (0::Int),
                         _protocol=protocol,
                         _msgCB=con f,
-                        _connProps=[PropSessionExpiryInterval $ opt "session-expiry-interval" 0,
-                                    PropTopicAliasMaximum $ opt "topic-alias-maximum" 2048,
-                                    PropMaximumPacketSize $ opt "maximum-packet-size" 65536,
-                                    PropReceiveMaximum $ opt "receive-maximum" 256,
+                        _connProps=[PropSessionExpiryInterval $ opt coSessionExpiryInterval 0,
+                                    PropTopicAliasMaximum $ opt coTopicAliasMaximum 2048,
+                                    PropMaximumPacketSize $ opt coMaximumPacketSize 65536,
+                                    PropReceiveMaximum $ opt coReceiveMaximum 256,
                                     PropRequestResponseInformation 1,
                                     PropRequestProblemInformation 1]
                        } uri
 
   where
-    protocol = if opt "protocol" 5 == (3::Int)
+    protocol = if fromMaybe 5 coProtocol == (3::Int)
                then Protocol311
                else Protocol50
 
-    opt t d = toEnum $ Map.findWithDefault d t opts
+    opt v d = fromIntegral (fromMaybe d v)
 
     con = case ot of
             Unordered -> LowLevelCallback
@@ -101,6 +106,28 @@ mcs = do
     when (null m) retry
     pure m
 
+-- | Publish the current counters as retained values on connections with a
+-- configured stat prefix.  These are sent directly, rather than through
+-- 'copyMsg', so reporting stats doesn't itself increment them.
+publishStats :: Bridge ()
+publishStats = do
+  ss <- asks stats
+  flushStats ss
+  counts <- retrieveStats ss
+  clients <- mcs
+  prefixes <- asks statPrefixes
+  liftIO $ mapM_ (publishClient counts clients) (Map.toList prefixes)
+  where
+    publishClient counts clients (n, prefix) =
+      mapM_ (\mc -> mapM_ (publishOne prefix mc) (Map.assocs counts)) (Map.lookup n clients)
+    publishOne prefix mc (k, v) = case mkTopic (statKeyName prefix k) of
+      Nothing -> fail ("invalid stats topic for " <> show k)
+      Just t  -> pubAliased mc t (BL.fromStrict . TE.encodeUtf8 . lstr $ v) True QoS0 [PropMessageExpiryInterval 60]
+
+-- | Refresh the retained stats periodically.
+statsPublisher :: Bridge ()
+statsPublisher = forever $ publishStats *> liftIO (threadDelay 15000000)
+
 -- MQTT message callback that will look up a destination and deliver a message to it.
 copyMsg :: Server -> (Bridge () -> IO ()) -> (MQTTClient -> PublishRequest -> IO ())
 copyMsg n unl _ PublishRequest{..} = unl $ do
@@ -108,6 +135,7 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
   Metrics{srcCounters} <- asks metrics
 
   liftIO $ inc (srcCounters Map.! n)
+  incrementStat (StatMsgRcvd n) 1 =<< asks stats
   case ((mkTopic . TE.decodeUtf8 . BL.toStrict) _pubTopic, Map.lookup n dm) of
     (Nothing, _) -> logErr $ mconcat ["Dropping a message from ", lstr n, " with an invalid topic: ", lstr _pubTopic]
     -- No from block for this conn, so it's from a subscription that's no
@@ -138,6 +166,7 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
         else do
           Metrics{errCounters} <- asks metrics
           liftIO $ mapM_ inc (Map.lookup d errCounters)
+          incrementStat (StatMsgFailed d) 1 =<< asks stats
           logErr $ mconcat ["Failed to deliver ", unTopic topic, " to ", lstr d, ": ", lstr e]
 
     deliver :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
@@ -153,9 +182,11 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
         fitTo sp PublishRequest{_pubTopic=BL.fromStrict (TE.encodeUtf8 (unTopic dt)),
                                 _pubProps=filter cleanProps _pubProps, ..}
       Metrics{destCounters} <- asks metrics
+      ss <- asks stats
       liftIO $ do
         inc (destCounters Map.! d)
         pubAliased mc dt ob orr oq op
+        incrementStat (StatMsgSent d) 1 ss
 
         where
           cleanProps (PropTopicAlias _) = False

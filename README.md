@@ -29,3 +29,23 @@ so a message is acknowledged to its source only after it's been
 forwarded, and one caught by a restart is delivered again.  That means
 QoS 2 messages are forwarded at QoS 1, and a destination can see the
 occasional duplicate.
+
+## Stats
+
+Set `stat-prefix` on a connection to publish the bridge's counters to that
+broker every 15 seconds as retained QoS 0 messages:
+
+```
+conn local mqtt://localhost/#bridge
+     stat-prefix="mqtt-bridge"
+```
+
+This example uses `<prefix>` = `mqtt-bridge` and publishes:
+
+- `<prefix>/<connection>/messages/received` — messages received from that connection.
+- `<prefix>/<connection>/messages/sent` — messages forwarded to that connection.
+- `<prefix>/<connection>/messages/failed` — messages that couldn't be delivered to that connection.
+
+Stats aren't published on a connection without `stat-prefix`.  Multiple
+connections can have a prefix, each with its own value.  The same counters
+remain available through EKG (on `localhost:8000` by default).

@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, filterCovers, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), Dest(..), TransFun(..)
+  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, filterCovers, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), ConnOptions(..), Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -13,8 +13,8 @@ import qualified Data.Map.Strict            as Map
 import           Data.Text                  (Text, pack, unpack)
 import qualified Data.Text                  as T
 import           Data.Void                  (Void)
-import           Text.Megaparsec            (Parsec, between, eof, noneOf, option, parse, some, try)
-import           Text.Megaparsec.Char       (alphaNumChar, space1)
+import           Text.Megaparsec            (Parsec, between, choice, eof, noneOf, option, parse, some, try)
+import           Text.Megaparsec.Char       (alphaNumChar, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Error      (errorBundlePretty)
 
@@ -30,7 +30,30 @@ type Server = Text
 
 data OrderedType = Unordered | Ordered deriving (Show, Eq)
 
-data Conn = Conn Server OrderedType URI (Map Text Int) deriving(Show, Eq)
+data Conn = Conn Server OrderedType URI ConnOptions deriving(Show, Eq)
+
+data ConnOptions = ConnOptions {
+  coSessionExpiryInterval :: Maybe Int,
+  coTopicAliasMaximum     :: Maybe Int,
+  coMaximumPacketSize     :: Maybe Int,
+  coReceiveMaximum        :: Maybe Int,
+  coProtocol              :: Maybe Int,
+  coStatPrefix            :: Maybe Topic
+  } deriving (Show, Eq)
+
+-- Later occurrences override earlier ones, as they did in the old option map.
+instance Semigroup ConnOptions where
+  a <> b = ConnOptions {
+    coSessionExpiryInterval = coSessionExpiryInterval b <|> coSessionExpiryInterval a,
+    coTopicAliasMaximum     = coTopicAliasMaximum b     <|> coTopicAliasMaximum a,
+    coMaximumPacketSize     = coMaximumPacketSize b     <|> coMaximumPacketSize a,
+    coReceiveMaximum        = coReceiveMaximum b        <|> coReceiveMaximum a,
+    coProtocol              = coProtocol b              <|> coProtocol a,
+    coStatPrefix            = coStatPrefix b            <|> coStatPrefix a
+    }
+
+instance Monoid ConnOptions where
+  mempty = ConnOptions Nothing Nothing Nothing Nothing Nothing Nothing
 
 data Sink = Sink Server [Dest] deriving(Show, Eq)
 
@@ -66,14 +89,19 @@ parseBridgeConf = do
 word :: Parser Text
 word = pack <$> some alphaNumChar
 
+qstr :: Parser String
+qstr = between "\"" "\"" (some $ noneOf ['"'])
+       <|> between "'" "'" (some $ noneOf ['\''])
+
 parseConn :: Map Text Conn -> Parser (Map Text Conn)
 parseConn m = do
-  ((n, ot, url), opts) <- itemList src stuff
+  ((n, ot, url), rawOpts) <- itemList src stuff
+  let opts = mconcat rawOpts
   -- A session can only be resumed under the same client ID, so a
   -- persistent one needs it set (as the URI fragment).
-  when (maybe False (> 0) (lookup "session-expiry-interval" opts) && null (drop 1 (uriFragment url))) $
+  when (maybe False (> 0) (coSessionExpiryInterval opts) && null (drop 1 (uriFragment url))) $
     fail ("conn " <> show n <> " has a session expiry but no client ID (e.g. " <> show (show url <> "#" <> unpack n) <> ")")
-  pure $ Map.insert n (Conn n ot url (Map.fromList opts)) m
+  pure $ Map.insert n (Conn n ot url opts) m
 
   where
     src = do
@@ -86,18 +114,36 @@ parseConn m = do
       u <- maybe (fail ("invalid URI: " <> show ustr)) pure (parseURI ustr)
       pure (w, ot, u)
 
-    stuff = do
-      k <- pack <$> lexeme (some (noneOf ['\n', ' ', '=']))
-      v <- lexeme "=" *> lexeme L.decimal
-      case lookup k optionRanges of
-        Nothing -> fail ("unknown option: " <> show k)
-        Just ok -> if ok v then pure (k,v) else fail ("invalid value for " <> show k <> ": " <> show v)
+    stuff = choice [
+      numericOption "session-expiry-interval" (between' 0 4294967295) (\v -> mempty{coSessionExpiryInterval=Just v}),
+      numericOption "topic-alias-maximum" (between' 0 65535) (\v -> mempty{coTopicAliasMaximum=Just v}),
+      numericOption "maximum-packet-size" (between' 1 4294967295) (\v -> mempty{coMaximumPacketSize=Just v}),
+      numericOption "receive-maximum" (between' 1 65535) (\v -> mempty{coReceiveMaximum=Just v}),
+      numericOption "protocol" (`elem` [3, 5]) (\v -> mempty{coProtocol=Just v}),
+      statPrefixOption
+      ]
+
+numericOption :: Text -> (Int -> Bool) -> (Int -> ConnOptions) -> Parser ConnOptions
+numericOption n ok f = do
+  _ <- lexeme (string n) <* lexeme "="
+  v <- lexeme L.decimal
+  if ok v then pure (f v) else fail ("invalid value for " <> show n <> ": " <> show v)
+
+statPrefixOption :: Parser ConnOptions
+statPrefixOption = do
+  _ <- lexeme "stat-prefix" <* lexeme "="
+  pstr <- lexeme qstr
+  p <- maybe (fail ("invalid stat-prefix: " <> show pstr)) pure (mkTopic (pack pstr))
+  pure mempty{coStatPrefix=Just p}
+
+between' :: Int -> Int -> Int -> Bool
+between' lo hi v = v >= lo && v <= hi
 
 -- | Things worth warning about in a config.
 confWarnings :: BridgeConf -> [Text]
 confWarnings (BridgeConf conns sinks) = concatMap connWarnings (Map.elems conns) <> echoes <> unretained
   where
-    is311 n = maybe False (\(Conn _ _ _ o) -> Map.lookup "protocol" o == Just 3) (Map.lookup n conns)
+    is311 n = maybe False (\(Conn _ _ _ o) -> coProtocol o == Just 3) (Map.lookup n conns)
     filtersAt n = [f | Sink s ds <- sinks, s == n, Dest f _ _ <- ds]
     -- 3.1.1 has no No Local, so a 3.1.1 conn sends the bridge back what
     -- it forwards there, if it's also syncing an overlapping filter
@@ -146,19 +192,7 @@ filterCovers a b = case (levels a, levels b) of
 connWarnings :: Conn -> [Text]
 connWarnings (Conn n _ _ opts) =
   [ "conn " <> n <> " uses the default maximum-packet-size of 65536; the broker drops bigger messages for it without saying so"
-  | Map.notMember "maximum-packet-size" opts ]
-
--- | The options a conn can have, and their valid values.  These go into
--- CONNECT, where 0 isn't allowed for the maximums [5.0 §3.1.2.11].
-optionRanges :: [(Text, Int -> Bool)]
-optionRanges = [
-  ("session-expiry-interval", between' 0 4294967295),
-  ("topic-alias-maximum", between' 0 65535),
-  ("maximum-packet-size", between' 1 4294967295),
-  ("receive-maximum", between' 1 65535),
-  ("protocol", (`elem` [3, 5]))
-  ]
-  where between' lo hi v = v >= lo && v <= hi
+  | coMaximumPacketSize opts == Nothing ]
 
 parseSink :: Map Text Conn -> Parser Sink
 parseSink conns = uncurry Sink <$> itemList src stuff
@@ -180,9 +214,6 @@ parseSink conns = uncurry Sink <$> itemList src stuff
         pure $ Dest t w tf
 
       parseTF = lexeme aTopic >>= \d -> pure $ TransFun "rewrite" (const (Just d))
-
-      qstr = between "\"" "\"" (some $ noneOf ['"'])
-             <|> between "'" "'" (some $ noneOf ['\''])
 
 itemList :: Parser a -> Parser b ->  Parser (a, [b])
 itemList pa pb = L.nonIndented sc (L.indentBlock sc p)

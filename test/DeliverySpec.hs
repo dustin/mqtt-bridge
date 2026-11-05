@@ -22,6 +22,7 @@ import           Network.MQTT.Types
 import           Bridge
 import           BridgeConf
 import           FakeBroker
+import           Stats
 
 -- | A bridge from "src" to "dst" for the given filters, with clients
 -- connected to fake brokers.
@@ -39,7 +40,8 @@ withBridge' dstProps ds f = do
   let names = ["src", "dst"]
       counters = Map.fromList <$> traverse (\n -> (,) n <$> Counter.new) names
   mets <- Metrics <$> counters <*> counters <*> counters
-  f (Env cv (Map.singleton "src" ds) mets) src srcB dstB
+  ss <- newStatStore
+  f (Env cv (Map.singleton "src" ds) mets mempty ss) src srcB dstB
 
 pub :: QoS -> PublishRequest
 pub q = PublishRequest{_pubDup=False, _pubQoS=q, _pubPktID=1, _pubRetain=False,
@@ -156,8 +158,45 @@ unit_lostDestinationQoS0 = withBridge [] toDst $ \env src _ -> do
   stopClient dst
   forward env src (pub QoS0) >>= either (\e -> assertFailure ("failed: " <> show e)) pure
 
+-- Delivery updates the per-connection counters without conflating a failed
+-- send with a successful one.
+unit_deliveryStats :: Assertion
+unit_deliveryStats = withBridge [] toDst $ \env src _ -> do
+  _ <- forward env src (pub QoS0)
+  flushStats (stats env)
+  counts <- retrieveStats (stats env)
+  assertEqual "successful delivery counters"
+    (Map.fromList [(StatMsgRcvd "src", 1), (StatMsgSent "dst", 1)]) counts
+
+unit_failedDeliveryStats :: Assertion
+unit_failedDeliveryStats = withBridge [] toDst $ \env src dstB -> do
+  forwardAcked env src dstB 1 0x87 >>= either (\e -> assertFailure ("delivery error escaped: " <> show e)) pure
+  flushStats (stats env)
+  counts <- retrieveStats (stats env)
+  assertEqual "failed delivery counters"
+    (Map.fromList [(StatMsgRcvd "src", 1), (StatMsgFailed "dst", 1)]) counts
+
+-- Stats go only to a broker with a configured prefix, as retained values,
+-- without being forwarded as ordinary bridge traffic.
+unit_publishesStats :: Assertion
+unit_publishesStats = withBridge' [] toDst $ \env _ srcB dstB -> do
+  incrementStat (StatMsgRcvd "src") 7 (stats env)
+  let env' = env{statPrefixes=Map.singleton "dst" "monitor/bridge"}
+  runBridge env' publishStats
+  nthWritten 1 dstB >>= \case
+    PublishPkt PublishRequest{_pubTopic, _pubBody, _pubRetain, _pubQoS} -> do
+      assertEqual "stats topic" "monitor/bridge/src/messages/received" _pubTopic
+      assertEqual "counter value" "7" _pubBody
+      assertBool "retained" _pubRetain
+      assertEqual "QoS" QoS0 _pubQoS
+    x -> assertFailure ("expected a stats PUBLISH, got " <> show x)
+  assertEqual "no stats on an unconfigured connection" [] =<< writtenSince 0 srcB
+
 tests :: [TestTree]
 tests = [
+  testCase "publishes stats" unit_publishesStats,
+  testCase "failed delivery stats" unit_failedDeliveryStats,
+  testCase "delivery stats" unit_deliveryStats,
   testCase "lost destination not acked" unit_lostDestinationNotAcked,
   testCase "lost destination, QoS 0" unit_lostDestinationQoS0,
   testCase "covered filters collapsed" unit_coveredFiltersCollapsed,

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2cbff11560a1c71e59384c550f62d80cd571ca5c4ef82fc072c36ffe02858c15
+-- hash: e67f4435cc22f195650adabaa5c7dd963c3457dea1e54cae3ab077bc0a7837e4
 
 name:           mqtt-bridge
 version:        0.1.0.0
@@ -29,6 +29,7 @@ library
   exposed-modules:
       Bridge
       BridgeConf
+      Stats
   other-modules:
       Paths_mqtt_bridge
   hs-source-dirs:
@@ -92,6 +93,7 @@ test-suite influxer-test
   other-modules:
       DeliverySpec
       FakeBroker
+      StatsSpec
       Paths_mqtt_bridge
   hs-source-dirs:
       test

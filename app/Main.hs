@@ -22,6 +22,7 @@ import           UnliftIO.Async           (mapConcurrently, mapConcurrently_)
 
 import           Bridge
 import           BridgeConf
+import           Stats
 
 data Options = Options {
   optConfFile :: String,
@@ -46,18 +47,20 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   fullConf@(BridgeConf conns sinks) <- liftIO (parseConfFile optConfFile)
 
   mets <- liftIO $ makeMetrics metricServer fullConf
+  ss <- newStatStore
   mapM_ (logAt LevelWarn) (confWarnings fullConf)
   cmtv <- liftIO $ newTVarIO mempty
-  let env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets
+  let prefixes = Map.mapMaybe (\(Conn _ _ _ o) -> coStatPrefix o) conns
+      env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets prefixes ss
   flip runReaderT env $ do
     mcs' <- Map.fromList <$> mapConcurrently connect (Map.elems conns)
     liftIO . atomically $ writeTVar cmtv mcs'
     mapConcurrently_ subscribeSink sinks
-    raceABunch_ $ map (liftIO . waitForClient) (Map.elems mcs')
+    raceABunch_ $ [applyStats ss, statsPublisher] <> map (liftIO . waitForClient) (Map.elems mcs')
 
   where
     connect (Conn n ot u o) = do
-      logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr (Map.toList o)]
+      logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr o]
       mc <- withRunInIO $ \unl -> do
         mc <- connectMQTT ot u o (copyMsg n unl)
         (ConnACKFlags sp _ props) <- connACK mc
