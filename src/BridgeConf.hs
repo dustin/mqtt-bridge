@@ -152,7 +152,7 @@ between' lo hi v = v >= lo && v <= hi
 
 -- | Things worth warning about in a config.
 confWarnings :: BridgeConf -> [Text]
-confWarnings (BridgeConf conns sinks) = concatMap connWarnings (Map.elems conns) <> echoes <> unretained
+confWarnings (BridgeConf conns sinks) = concatMap connWarnings (Map.elems conns) <> echoes <> unretained <> collapsed
   where
     is311 n = maybe False (\(Conn _ _ o) -> coProtocol o == Just 3) (Map.lookup n conns)
     filtersAt n = [f | Sink s ds <- sinks, s == n, Dest f _ _ <- ds]
@@ -166,6 +166,12 @@ confWarnings (BridgeConf conns sinks) = concatMap connWarnings (Map.elems conns)
     -- ...and no Retain As Published, so live messages arrive unretained.
     unretained = [ "messages from " <> s <> " lose their retain flag, since 3.1.1 has no Retain As Published"
                  | Sink s _ <- sinks, is311 s ]
+    -- A rewrite target is one topic, so every topic a wildcard matches
+    -- lands on it, and they share (and replace) one retained value.
+    collapsed = [ "messages from " <> s <> " on " <> unFilter f <> " all go to " <> d <> " as " <> unTopic t
+                  <> ", so they share one retained value there"
+                | Sink s ds <- sinks, Dest f d (TransFun "rewrite" fn) <- ds, hasWildcard f, Just t <- [fn ""] ]
+    hasWildcard = any (`elem` ["+", "#"]) . T.splitOn "/" . unFilter
     forwarded f (TransFun "rewrite" fn) = maybe f toFilter (fn "")
     forwarded f _                       = f
 

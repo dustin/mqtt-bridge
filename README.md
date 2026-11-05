@@ -14,6 +14,13 @@ each message on its own thread instead, which is faster but can
 reorder them, including leaving a stale retained value at the
 destination.
 
+## Rewriting
+
+`sync "x/#" -> b "y"` sends everything matching `x/#` to `b` as the one
+topic `y`.  Those messages then share a single retained value at `b`, so a
+retained message (or a retained delete) on any `x/` topic replaces the
+others'.  The bridge warns about this at startup.
+
 ## Persistent sessions
 
 With `session-expiry-interval` above 0, the broker keeps a conn's

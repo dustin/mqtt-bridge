@@ -127,8 +127,19 @@ testProtocol311Warnings = do
   assertEqual "3.1.1, separate" 1 (confWarned (conf "3" "z/#"))
   assertEqual "5.0" 0 (confWarned (conf "5" "x/y"))
 
+-- #7: A rewrite from a wildcard collapses its topics into one retained
+-- value, which gets a warning.
+testRewriteWarning :: Assertion
+testRewriteWarning = do
+  let conf f = T.unlines ["conn a mqtt://a/", "     maximum-packet-size=1000",
+                          "conn b mqtt://b/", "     maximum-packet-size=1000",
+                          "from a", "     sync \"" <> f <> "\" -> b \"y\""]
+  assertEqual "from a wildcard" 1 (confWarned (conf "x/#"))
+  assertEqual "from a topic" 0 (confWarned (conf "x/1"))
+
 tests :: [TestTree]
 tests = [
+  testCase "rewrite warning" testRewriteWarning,
   testCase "example conf" testParser,
   testCase "ordering" testOrdering,
   testCase "stat prefix" testStatPrefix,
