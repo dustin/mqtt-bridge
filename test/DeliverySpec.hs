@@ -206,9 +206,20 @@ unit_aliasCounted = withBridge [PropMaximumPacketSize limit, PropTopicAliasMaxim
     big = BL.replicate 10 0x78
     limit = fromIntegral . BL.length . toByteString Protocol50 $ PublishPkt (pub QoS0){_pubBody=big}
 
+-- #2: Stats aren't retained on a broker without retain support.
+unit_statsRetainAvailable :: Assertion
+unit_statsRetainAvailable = withBridge [PropRetainAvailable 0] toDst $ \env _ dstB -> do
+  runBridge env{statPrefixes=Map.singleton "dst" "monitor"} publishStats
+  incrementStat (StatMsgRcvd "src") 1 (stats env)
+  runBridge env{statPrefixes=Map.singleton "dst" "monitor"} publishStats
+  nthWritten 1 dstB >>= \case
+    PublishPkt PublishRequest{_pubRetain} -> assertBool "stats retained" (not _pubRetain)
+    x -> assertFailure ("expected a stats PUBLISH, got " <> show x)
+
 tests :: [TestTree]
 tests = [
   testCase "alias counted in packet size" unit_aliasCounted,
+  testCase "stats respect retain available" unit_statsRetainAvailable,
   testCase "publishes stats" unit_publishesStats,
   testCase "failed delivery stats" unit_failedDeliveryStats,
   testCase "delivery stats" unit_deliveryStats,

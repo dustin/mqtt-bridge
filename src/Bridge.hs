@@ -108,7 +108,9 @@ mcs = do
 
 -- | Publish the current counters as retained values on connections with a
 -- configured stat prefix.  These are sent directly, rather than through
--- 'copyMsg', so reporting stats doesn't itself increment them.
+-- 'copyMsg', so reporting stats doesn't itself increment them, but they're
+-- still fitted to the broker's limits (e.g. not retained if it doesn't
+-- support that).
 publishStats :: Bridge ()
 publishStats = do
   ss <- asks stats
@@ -116,13 +118,27 @@ publishStats = do
   counts <- retrieveStats ss
   clients <- mcs
   prefixes <- asks statPrefixes
-  liftIO $ mapM_ (publishClient counts clients) (Map.toList prefixes)
+  sequence_ [publishOne n prefix mc kv | (n, prefix) <- Map.toList prefixes,
+                                          mc <- maybe [] pure (Map.lookup n clients),
+                                          kv <- Map.assocs counts]
   where
-    publishClient counts clients (n, prefix) =
-      mapM_ (\mc -> mapM_ (publishOne prefix mc) (Map.assocs counts)) (Map.lookup n clients)
-    publishOne prefix mc (k, v) = case mkTopic (statKeyName prefix k) of
-      Nothing -> fail ("invalid stats topic for " <> show k)
-      Just t  -> pubAliased mc t (BL.fromStrict . TE.encodeUtf8 . lstr $ v) True QoS0 [PropMessageExpiryInterval 60]
+    publishOne n prefix mc (k, v) = case mkTopic (statKeyName prefix k) of
+      Nothing -> logErr $ "invalid stats topic for " <> lstr k
+      Just t  -> do
+        r <- liftIO $ sendFitted mc t PublishRequest{_pubDup=False, _pubQoS=QoS0, _pubPktID=0, _pubRetain=True,
+                                                     _pubTopic=mempty, _pubBody=BL.fromStrict . TE.encodeUtf8 . lstr $ v,
+                                                     _pubProps=[PropMessageExpiryInterval 60]}
+        either (\e -> logErr $ mconcat ["Not publishing ", unTopic t, " to ", lstr n, ": ", e]) pure r
+
+-- | Publish to a topic, fitted to the client's server properties (see
+-- 'fitTo').  A message that can't be fitted isn't sent, and its reason is
+-- returned.
+sendFitted :: MQTTClient -> Topic -> PublishRequest -> IO (Either Text ())
+sendFitted mc t p = do
+  sp <- svrProps mc
+  case fitTo sp p{_pubTopic=BL.fromStrict (TE.encodeUtf8 (unTopic t))} of
+    Left e -> pure (Left e)
+    Right PublishRequest{..} -> Right <$> pubAliased mc t _pubBody _pubRetain _pubQoS _pubProps
 
 -- | Refresh the retained stats periodically.
 statsPublisher :: Bridge ()
@@ -177,15 +193,11 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
       dt <- maybe (fail ("no destination topic for " <> show topic)) pure dtopic
       logDbg $ mconcat ["Delivering ", unTopic topic, rewritten dt,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]
-      sp <- liftIO $ svrProps mc
-      PublishRequest{_pubBody=ob, _pubRetain=orr, _pubQoS=oq, _pubProps=op} <- either (fail . unpack) pure $
-        fitTo sp PublishRequest{_pubTopic=BL.fromStrict (TE.encodeUtf8 (unTopic dt)),
-                                _pubProps=filter cleanProps _pubProps, ..}
       Metrics{destCounters} <- asks metrics
       ss <- asks stats
       liftIO $ do
         inc (destCounters Map.! d)
-        pubAliased mc dt ob orr oq op
+        either (fail . unpack) pure =<< sendFitted mc dt PublishRequest{_pubProps=filter cleanProps _pubProps, ..}
         incrementStat (StatMsgSent d) 1 ss
 
         where
