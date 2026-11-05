@@ -5,7 +5,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module Bridge (
-  Env(..), Bridge, Metrics(..), destFilters, connectMQTT, copyMsg, subscribeSink, mcs, fitTo,
+  Env(..), Bridge, Metrics(..), destFilters, routes, connectMQTT, copyMsg, subscribeSink, mcs, fitTo,
   publishStats, statsPublisher, raceABunch_, logAt, logInfo, logDbg, logErr, lstr
   ) where
 
@@ -17,6 +17,7 @@ import           Control.Monad.IO.Unlift  (MonadUnliftIO)
 import           Control.Monad.Logger     (LogLevel (..), LoggingT, MonadLogger, logWithoutLoc)
 import           Control.Monad.Reader     (ReaderT (..), asks)
 import qualified Data.ByteString.Lazy     as BL
+import           Data.Containers.ListUtils (nubOrd)
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import           Data.Maybe               (fromMaybe)
@@ -41,6 +42,11 @@ import           Stats
 destFilters :: [Dest] -> [Filter]
 destFilters ds = [f | f <- fs, not (any (\g -> g /= f && filterCovers g f) fs)]
   where fs = Set.toList . Set.fromList $ map (\(Dest t _ _) -> t) ds
+
+-- | Where a message on a topic goes: each destination server and
+-- rewritten topic at most once, however many 'Dest's match.
+routes :: [Dest] -> Topic -> [(Server, Maybe Topic)]
+routes ds topic = nubOrd [(s, f (unTopic topic)) | Dest t s (TransFun _ f) <- ds, match t topic]
 
 data Env = Env {
   conns        :: TVar (Map Server MQTTClient),
@@ -157,9 +163,7 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
     -- No from block for this conn, so it's from a subscription that's no
     -- longer configured (a resumed session's).
     (Just topic, Nothing) -> logDbg $ mconcat ["Dropping ", unTopic topic, " from ", lstr n, ", which has nothing to sync"]
-    (Just topic, Just ds) -> do
-      let dests = map (\(Dest _ s (TransFun _ f)) -> (s,f)) $ filter (\(Dest t _ _) -> match t topic) ds
-      mapM_ (contained topic) dests
+    (Just topic, Just ds) -> mapM_ (contained topic) (routes ds topic)
 
   where
     -- A destination refusing a message (or its being unsendable, e.g. too
@@ -169,8 +173,8 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
     -- or 2 message is failed rather than acked, so the source redelivers
     -- it after the supervisor reconnects the bridge.  A QoS 0 one can't be
     -- redelivered, so it's dropped.
-    contained :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
-    contained topic (d, f) = tryAny (deliver topic (d, f)) >>= either (failed topic d) pure
+    contained :: Topic -> (Server, Maybe Topic) -> Bridge ()
+    contained topic (d, dt) = tryAny (deliver topic (d, dt)) >>= either (failed topic d) pure
 
     failed :: Topic -> Server -> SomeException -> Bridge ()
     failed topic d e = do
@@ -185,11 +189,10 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
           incrementStat (StatMsgFailed d) 1 =<< asks stats
           logErr $ mconcat ["Failed to deliver ", unTopic topic, " to ", lstr d, ": ", lstr e]
 
-    deliver :: Topic -> (Server, Text -> Maybe Topic) -> Bridge ()
-    deliver topic (d,f) = do
+    deliver :: Topic -> (Server, Maybe Topic) -> Bridge ()
+    deliver topic (d, dtopic) = do
       mcs' <- mcs
       let mc = mcs' Map.! d
-          dtopic = f (unTopic topic)
       dt <- maybe (fail ("no destination topic for " <> show topic)) pure dtopic
       logDbg $ mconcat ["Delivering ", unTopic topic, rewritten dt,
                         " (r=", lstr _pubRetain, ", props=", lstr _pubProps, ") to ", lstr d]

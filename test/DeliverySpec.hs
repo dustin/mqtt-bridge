@@ -216,10 +216,22 @@ unit_statsRetainAvailable = withBridge [PropRetainAvailable 0] toDst $ \env _ ds
     PublishPkt PublishRequest{_pubRetain} -> assertBool "stats retained" (not _pubRetain)
     x -> assertFailure ("expected a stats PUBLISH, got " <> show x)
 
+publishes :: FakeBroker -> IO [PublishRequest]
+publishes b = (\ps -> [p | PublishPkt p <- ps]) <$> writtenSince 0 b
+
+-- #3: A message several sync lines send to the same destination and
+-- topic goes there once.
+unit_sameDestinationOnce :: Assertion
+unit_sameDestinationOnce = withBridge [] ds $ \env src dstB -> do
+  _ <- forward env src (pub QoS0)
+  assertEqual "forwards" 1 . length =<< publishes dstB
+  where ds = [Dest f "dst" (TransFun "id" mkTopic) | f <- ["a/#", "a/b", "+/b"]]
+
 tests :: [TestTree]
 tests = [
   testCase "alias counted in packet size" unit_aliasCounted,
   testCase "stats respect retain available" unit_statsRetainAvailable,
+  testCase "same destination once" unit_sameDestinationOnce,
   testCase "publishes stats" unit_publishesStats,
   testCase "failed delivery stats" unit_failedDeliveryStats,
   testCase "delivery stats" unit_deliveryStats,
