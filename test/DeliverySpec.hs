@@ -227,11 +227,21 @@ unit_sameDestinationOnce = withBridge [] ds $ \env src dstB -> do
   assertEqual "forwards" 1 . length =<< publishes dstB
   where ds = [Dest f "dst" (TransFun "id" mkTopic) | f <- ["a/#", "a/b", "+/b"]]
 
+-- #6: A received Subscription Identifier isn't forwarded [MQTT-3.3.4-6].
+unit_subscriptionIdentifierStripped :: Assertion
+unit_subscriptionIdentifierStripped = withBridge [] toDst $ \env src dstB -> do
+  _ <- forward env src (pub QoS0){_pubProps=[PropSubscriptionIdentifier 1, PropUserProperty "k" "v"]}
+  nthWritten 1 dstB >>= \case
+    PublishPkt PublishRequest{_pubProps} -> assertEqual "props" [PropUserProperty "k" "v"] [p | p@(PropUserProperty _ _) <- _pubProps] *>
+                                           assertBool "subscription ID forwarded" (null [() | PropSubscriptionIdentifier _ <- _pubProps])
+    x -> assertFailure ("expected a PUBLISH, got " <> show x)
+
 tests :: [TestTree]
 tests = [
   testCase "alias counted in packet size" unit_aliasCounted,
   testCase "stats respect retain available" unit_statsRetainAvailable,
   testCase "same destination once" unit_sameDestinationOnce,
+  testCase "subscription identifier stripped" unit_subscriptionIdentifierStripped,
   testCase "publishes stats" unit_publishesStats,
   testCase "failed delivery stats" unit_failedDeliveryStats,
   testCase "delivery stats" unit_deliveryStats,

@@ -204,8 +204,9 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
         incrementStat (StatMsgSent d) 1 ss
 
         where
-          cleanProps (PropTopicAlias _) = False
-          cleanProps _                  = True
+          cleanProps (PropTopicAlias _)             = False
+          cleanProps (PropSubscriptionIdentifier _) = False
+          cleanProps _                              = True
           rewritten dtopic'
             | topic == dtopic' = ""
             | otherwise        = " as " <> lstr dtopic'
