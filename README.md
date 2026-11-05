@@ -43,9 +43,11 @@ Subscription Identifier, so when partly overlapping filters (like `x/+`
 and `+/y`) bring a copy each, only one is forwarded.
 
 If any connection ends, the bridge closes its remaining clients and reconnects
-after one second.  A QoS 1 or 2 message whose destination disappeared isn't
-acknowledged to its source, so a persistent source session redelivers it after
-reconnection.
+after one second.  Connections aren't independent: while one broker is
+unreachable, every other bridge pair stops too, retrying each second.  Run
+separate bridges for pairs that shouldn't wait on each other.  A QoS 1 or 2
+message whose destination disappeared isn't acknowledged to its source, so
+a persistent source session redelivers it after reconnection.
 
 ## Stats
 
