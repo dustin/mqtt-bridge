@@ -54,17 +54,23 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   ss <- newStatStoreWithKeys [k n | n <- Map.keys conns, k <- [StatMsgRcvd, StatMsgSent, StatMsgFailed]]
   mapM_ (logAt LevelWarn) (confWarnings fullConf)
   cmtv <- liftIO $ newTVarIO mempty
+  liveClients <- liftIO $ newTVarIO mempty
   let prefixes = Map.mapMaybe (\(Conn _ _ _ o) -> coStatPrefix o) conns
       env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets prefixes ss
       session = finally runSession cleanup
       runSession = do
-        clients <- mapConcurrently connect (Map.elems conns)
+        clients <- Map.fromList <$> mapConcurrently connect (Map.elems conns)
+        -- Persistent sources can deliver as soon as they connect.  Keep their
+        -- callbacks blocked until every destination is available.
+        liftIO . atomically $ writeTVar cmtv clients
+        raceABunch_ $ [applyStats ss, runSubscriptions] <> map (liftIO . waitForClient) (Map.elems clients)
+      runSubscriptions = do
         mapConcurrently_ subscribeSink sinks
-        raceABunch_ $ [applyStats ss, statsPublisher] <> map (liftIO . waitForClient . snd) clients
+        statsPublisher
       cleanup = do
-        clients <- liftIO $ readTVarIO cmtv
+        clients <- liftIO $ readTVarIO liveClients
         liftIO $ mapM_ stopClient (Map.elems clients)
-        liftIO . atomically $ writeTVar cmtv mempty
+        liftIO . atomically $ writeTVar cmtv mempty *> writeTVar liveClients mempty
       connect (Conn n ot u o) = do
         logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr o]
         mc <- withRunInIO $ \unl -> do
@@ -72,7 +78,7 @@ run Options{..} = runStderrLoggingT . logfilt $ do
           (ConnACKFlags sp _ props) <- connACK mc
           unl . logInfo $ mconcat ["Connected to ", lstr u, " ", lstr sp,  " - server properties: ", lstr props]
           pure mc
-        liftIO . atomically $ modifyTVar' cmtv (Map.insert n mc)
+        liftIO . atomically $ modifyTVar' liveClients (Map.insert n mc)
         pure (n, mc)
   flip runReaderT env $ forever $ do
     tryAny session >>= \case
