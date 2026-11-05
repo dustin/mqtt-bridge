@@ -192,8 +192,23 @@ unit_publishesStats = withBridge' [] toDst $ \env _ srcB dstB -> do
     x -> assertFailure ("expected a stats PUBLISH, got " <> show x)
   assertEqual "no stats on an unconfigured connection" [] =<< writtenSince 0 srcB
 
+-- #1: A message that fits only without the Topic Alias the first send of a
+-- topic carries isn't sent to a destination that allows aliases (where
+-- it would get the bridge disconnected), and smaller ones still are.
+unit_aliasCounted :: Assertion
+unit_aliasCounted = withBridge [PropMaximumPacketSize limit, PropTopicAliasMaximum 10] toDst $ \env src dstB -> do
+  _ <- forward env src (pub QoS0){_pubBody=big}
+  _ <- forward env src (pub QoS0){_pubBody="x"}
+  nthWritten 1 dstB >>= \case
+    PublishPkt PublishRequest{_pubBody} -> assertEqual "first forwarded" "x" _pubBody
+    x -> assertFailure ("expected a PUBLISH, got " <> show x)
+  where
+    big = BL.replicate 10 0x78
+    limit = fromIntegral . BL.length . toByteString Protocol50 $ PublishPkt (pub QoS0){_pubBody=big}
+
 tests :: [TestTree]
 tests = [
+  testCase "alias counted in packet size" unit_aliasCounted,
   testCase "publishes stats" unit_publishesStats,
   testCase "failed delivery stats" unit_failedDeliveryStats,
   testCase "delivery stats" unit_deliveryStats,

@@ -207,8 +207,12 @@ fitTo props p
     fitted = p{_pubQoS=min (_pubQoS p) maxQoS, _pubRetain=_pubRetain p && retainOK}
     maxQoS = last (QoS2 : [if q == 0 then QoS0 else QoS1 | PropMaximumQoS q <- props, q < 2])
     retainOK = 0 `notElem` [r | PropRetainAvailable r <- props]
-    -- Measured with the full topic, though an alias may make it smaller.
-    size = BL.length (toByteString Protocol50 (PublishPkt fitted))
+    -- Measured with the full topic, and with the Topic Alias 'pubAliased'
+    -- adds to a topic's first PUBLISH when the destination allows aliases.
+    size = BL.length (toByteString Protocol50 (PublishPkt measured))
+    measured
+      | any (> 0) [n | PropTopicAliasMaximum n <- props] = fitted{_pubProps=PropTopicAlias maxBound : _pubProps fitted}
+      | otherwise = fitted
     tooBig = any (\m -> size > fromIntegral m) [m | PropMaximumPacketSize m <- props]
 
 raceABunch_ :: (MonadUnliftIO m, MonadLogger m) => [m a] -> m ()
