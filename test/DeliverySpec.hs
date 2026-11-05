@@ -236,12 +236,40 @@ unit_subscriptionIdentifierStripped = withBridge [] toDst $ \env src dstB -> do
                                            assertBool "subscription ID forwarded" (null [() | PropSubscriptionIdentifier _ <- _pubProps])
     x -> assertFailure ("expected a PUBLISH, got " <> show x)
 
+-- #4: Of the copies partly overlapping subscriptions bring, only the
+-- first matching filter's is delivered.  destFilters sorts +/y (ID 1)
+-- before x/+ (ID 2).
+unit_subscriptionIdentifierRouting :: Assertion
+unit_subscriptionIdentifierRouting = do
+  let ds = [Dest f "dst" (TransFun "id" mkTopic) | f <- ["x/+", "+/y"]]
+      n ids t = length (routes ds ids t)
+  assertEqual "filters" ["+/y", "x/+"] (destFilters ds)
+  assertEqual "x/y via +/y" 1 (n [1] "x/y")
+  assertEqual "x/y via x/+" 0 (n [2] "x/y")
+  assertEqual "x/y via both" 1 (n [1, 2] "x/y")
+  assertEqual "x/y without IDs" 1 (n [] "x/y")
+  assertEqual "x/z via x/+" 1 (n [2] "x/z")
+
+-- ...and each filter is subscribed with its own identifier.
+unit_subscribesWithIdentifiers :: Assertion
+unit_subscribesWithIdentifiers = withBridge' [] ds $ \env _ srcB _ -> do
+  let grant i = nthWritten i srcB >>= \case
+        SubscribePkt (SubscribeRequest pid subs props) -> do
+          inject srcB (SubACKPkt (SubscribeResponse pid [Right QoS1] []))
+          pure ([f | (f, _) <- subs], props)
+        x -> assertFailure ("expected a SUBSCRIBE, got " <> show x)
+  (_, got) <- concurrently (runBridge env (subscribeSink (Sink "src" ds))) (traverse grant [1, 2])
+  assertEqual "subscriptions" [(["+/y"], [PropSubscriptionIdentifier 1]), (["x/+"], [PropSubscriptionIdentifier 2])] got
+  where ds = [Dest f "dst" (TransFun "id" mkTopic) | f <- ["x/+", "+/y"]]
+
 tests :: [TestTree]
 tests = [
   testCase "alias counted in packet size" unit_aliasCounted,
   testCase "stats respect retain available" unit_statsRetainAvailable,
   testCase "same destination once" unit_sameDestinationOnce,
   testCase "subscription identifier stripped" unit_subscriptionIdentifierStripped,
+  testCase "subscription identifier routing" unit_subscriptionIdentifierRouting,
+  testCase "subscribes with identifiers" unit_subscribesWithIdentifiers,
   testCase "publishes stats" unit_publishesStats,
   testCase "failed delivery stats" unit_failedDeliveryStats,
   testCase "delivery stats" unit_deliveryStats,

@@ -11,13 +11,14 @@ module Bridge (
 
 import           Control.Concurrent       (threadDelay)
 import           Control.Concurrent.STM   (TVar, atomically, readTVar, retry)
-import           Control.Monad            (forever, void, when)
+import           Control.Monad            (forever, void, when, zipWithM)
 import           Control.Monad.IO.Class   (MonadIO (..))
 import           Control.Monad.IO.Unlift  (MonadUnliftIO)
 import           Control.Monad.Logger     (LogLevel (..), LoggingT, MonadLogger, logWithoutLoc)
 import           Control.Monad.Reader     (ReaderT (..), asks)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Containers.ListUtils (nubOrd)
+import           Data.List                (findIndex)
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import           Data.Maybe               (fromMaybe)
@@ -45,8 +46,19 @@ destFilters ds = [f | f <- fs, not (any (\g -> g /= f && filterCovers g f) fs)]
 
 -- | Where a message on a topic goes: each destination server and
 -- rewritten topic at most once, however many 'Dest's match.
-routes :: [Dest] -> Topic -> [(Server, Maybe Topic)]
-routes ds topic = nubOrd [(s, f (unTopic topic)) | Dest t s (TransFun _ f) <- ds, match t topic]
+--
+-- Each of 'destFilters' is subscribed with its (1-based) position as its
+-- Subscription Identifier, so the broker tells us which subscriptions a
+-- copy is for.  Filters that partly overlap (x/+ and +/y) can each bring
+-- a copy of a message, so only the copy for the first matching filter is
+-- delivered.  A message without identifiers (e.g. from a broker that
+-- doesn't support them) is delivered.
+routes :: [Dest] -> [Int] -> Topic -> [(Server, Maybe Topic)]
+routes ds subIDs topic
+  | wanted = nubOrd [(s, f (unTopic topic)) | Dest t s (TransFun _ f) <- ds, match t topic]
+  | otherwise = []
+  where
+    wanted = null subIDs || maybe False ((`elem` subIDs) . (+1)) (findIndex (`match` topic) (destFilters ds))
 
 data Env = Env {
   conns        :: TVar (Map Server MQTTClient),
@@ -163,7 +175,8 @@ copyMsg n unl _ PublishRequest{..} = unl $ do
     -- No from block for this conn, so it's from a subscription that's no
     -- longer configured (a resumed session's).
     (Just topic, Nothing) -> logDbg $ mconcat ["Dropping ", unTopic topic, " from ", lstr n, ", which has nothing to sync"]
-    (Just topic, Just ds) -> mapM_ (contained topic) (routes ds topic)
+    (Just topic, Just ds) ->
+      mapM_ (contained topic) (routes ds [i | PropSubscriptionIdentifier i <- _pubProps] topic)
 
   where
     -- A destination refusing a message (or its being unsendable, e.g. too
@@ -231,6 +244,13 @@ fitTo props p
       | otherwise = fitted
     tooBig = any (\m -> size > fromIntegral m) [m | PropMaximumPacketSize m <- props]
 
+-- | How sinks subscribe.  QoS 1, not 2: an inbound QoS 1 message is acked
+-- once it's been forwarded, so a restart redelivers it, but net-mqtt sends
+-- PUBREC for a QoS 2 one before handing it over, so one caught in between
+-- is lost.
+sinkSubOptions :: SubOptions
+sinkSubOptions = subOptions{_subQoS=QoS1, _noLocal=True, _retainHandling=SendOnSubscribeNew, _retainAsPublished=True}
+
 raceABunch_ :: (MonadUnliftIO m, MonadLogger m) => [m a] -> m ()
 raceABunch_ is = mapM async is >>= void.waitAnyCancel
 
@@ -240,17 +260,24 @@ subscribeSink (Sink n dests) = do
   m <- mcs
   logInfo $ mconcat ["subscribing ", lstr dests, " at ", lstr n]
   let filters = destFilters dests
-  -- QoS 1, not 2: an inbound QoS 1 message is acked once it's been
-  -- forwarded, so a restart redelivers it, but net-mqtt sends PUBREC for a
-  -- QoS 2 one before handing it over, so one caught in between is lost.
-  subrv@(results, _) <- liftIO $ subscribe (m Map.! n) [(t,subOptions{_subQoS=QoS1,
-                                                                      _noLocal=True,
-                                                                      _retainHandling=SendOnSubscribeNew,
-                                                                      _retainAsPublished=True}) | t <- filters] mempty
-  logInfo $ mconcat ["Sub response from ", lstr n, ": ", lstr subrv]
+      mc = m Map.! n
+  sp <- liftIO $ svrProps mc
+  -- A SUBSCRIBE's identifier applies to all its filters, so each filter
+  -- gets its own, numbered as 'routes' expects.
+  results <- if PropSubscriptionIdentifierAvailable 0 `elem` sp
+    then do
+      subrv@(rs, _) <- liftIO $ subscribe mc [(t, sinkSubOptions) | t <- filters] mempty
+      logInfo $ mconcat ["Sub response from ", lstr n, ": ", lstr subrv]
+      pure rs
+    else concat <$> zipWithM (subscribeOne mc) [1..] filters
   -- A refused filter would leave the bridge running without it.
   case [(f, e) | (f, Left e) <- zip filters results] of
     [] -> pure ()
     refused -> do
       logErr $ mconcat [lstr n, " refused subscriptions: ", lstr refused]
       fail ("subscriptions refused at " <> unpack n <> ": " <> show refused)
+  where
+    subscribeOne mc i t = do
+      subrv@(rs, _) <- liftIO $ subscribe mc [(t, sinkSubOptions)] [PropSubscriptionIdentifier i]
+      logInfo $ mconcat ["Sub response from ", lstr n, " for ", lstr t, ": ", lstr subrv]
+      pure rs
