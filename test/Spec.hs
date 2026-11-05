@@ -23,13 +23,14 @@ testParser = do
       (Just u2) = parseURI "ws://test.mosquitto.org:8080/#bridge"
   assertEqual "" (BridgeConf
                   (Map.fromList
-                  [("local", Conn "local" Ordered u1
+                  [("local", Conn "local" u1
                      (mempty{coMaximumPacketSize=Just 8192,
                              coReceiveMaximum=Just 64,
                              coSessionExpiryInterval=Just 1800,
                              coTopicAliasMaximum=Just 4096})),
-                   ("test", Conn "test" Ordered u2
-                     (mempty{coSessionExpiryInterval=Just 187}))])
+                   ("test", Conn "test" u2
+                     (mempty{coSessionExpiryInterval=Just 187,
+                             coOrdering = Just Ordered}))])
                    [Sink "test" [Dest "VirtualTopic/#" "local" (TransFun "id" mkTopic),
                                  Dest "VirtualTopic/#" "local"
                                   (TransFun "rewrite" (const (Just "junkpile")))],
@@ -41,13 +42,13 @@ testOrdering :: Assertion
 testOrdering = do
   BridgeConf conns _ <- parseConfFile "test/ordering.conf"
   assertEqual "ordering" [("ord", Ordered), ("plain", Ordered), ("unord", Unordered)]
-    [(n, ot) | (n, Conn _ ot _ _) <- Map.toList conns]
+    [(n, ordering o) | (n, Conn _ _ o) <- Map.toList conns]
 
 testStatPrefix :: Assertion
 testStatPrefix = case parseConfText "stat-prefix" conf of
   Left e -> assertFailure e
   Right (BridgeConf conns _) -> case conns Map.! "a" of
-    Conn _ _ _ opts -> assertEqual "last stat prefix wins" (Just "two") (coStatPrefix opts)
+    Conn _ _ opts -> assertEqual "last stat prefix wins" (Just "two") (coStatPrefix opts)
   where
     conf = T.unlines ["conn a mqtt://a/", "     stat-prefix=\"one\"", "     stat-prefix=\"two\"",
                       "from a", "     sync \"x/#\" -> a"]

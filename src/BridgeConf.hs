@@ -2,7 +2,7 @@
 {-# LANGUAGE TupleSections     #-}
 
 module BridgeConf (
-  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, filterCovers, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), ConnOptions(..), Dest(..), TransFun(..)
+  parseConfFile, parseConfText, connWarnings, confWarnings, filtersOverlap, filterCovers, BridgeConf(..), Server, Sink(..), OrderedType(..), Conn(..), ConnOptions(..), ordering, Dest(..), TransFun(..)
   ) where
 
 import           Control.Applicative        (empty, (<|>))
@@ -10,10 +10,12 @@ import           Control.Monad              (when)
 import           Data.Functor               (($>))
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
+import           Data.Maybe                 (fromMaybe)
 import           Data.Text                  (Text, pack, unpack)
 import qualified Data.Text                  as T
 import           Data.Void                  (Void)
-import           Text.Megaparsec            (Parsec, between, choice, eof, noneOf, option, parse, some, try)
+import           Text.Megaparsec            (Parsec, between, choice, eof,
+                                             noneOf, option, parse, some, try)
 import           Text.Megaparsec.Char       (alphaNumChar, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Error      (errorBundlePretty)
@@ -30,7 +32,7 @@ type Server = Text
 
 data OrderedType = Unordered | Ordered deriving (Show, Eq)
 
-data Conn = Conn Server OrderedType URI ConnOptions deriving(Show, Eq)
+data Conn = Conn Server URI ConnOptions deriving(Show, Eq)
 
 data ConnOptions = ConnOptions {
   coSessionExpiryInterval :: Maybe Int,
@@ -38,7 +40,8 @@ data ConnOptions = ConnOptions {
   coMaximumPacketSize     :: Maybe Int,
   coReceiveMaximum        :: Maybe Int,
   coProtocol              :: Maybe Int,
-  coStatPrefix            :: Maybe Topic
+  coStatPrefix            :: Maybe Topic,
+  coOrdering              :: Maybe OrderedType
   } deriving (Show, Eq)
 
 -- Later occurrences override earlier ones, as they did in the old option map.
@@ -49,11 +52,15 @@ instance Semigroup ConnOptions where
     coMaximumPacketSize     = coMaximumPacketSize b     <|> coMaximumPacketSize a,
     coReceiveMaximum        = coReceiveMaximum b        <|> coReceiveMaximum a,
     coProtocol              = coProtocol b              <|> coProtocol a,
-    coStatPrefix            = coStatPrefix b            <|> coStatPrefix a
+    coStatPrefix            = coStatPrefix b            <|> coStatPrefix a,
+    coOrdering              = coOrdering b              <|> coOrdering a
     }
 
 instance Monoid ConnOptions where
-  mempty = ConnOptions Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = ConnOptions Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+
+ordering :: ConnOptions -> OrderedType
+ordering = fromMaybe Ordered . coOrdering
 
 data Sink = Sink Server [Dest] deriving(Show, Eq)
 
@@ -95,24 +102,21 @@ qstr = between "\"" "\"" (some $ noneOf ['"'])
 
 parseConn :: Map Text Conn -> Parser (Map Text Conn)
 parseConn m = do
-  ((n, ot, url), rawOpts) <- itemList src stuff
+  ((n, url), rawOpts) <- itemList src stuff
   let opts = mconcat rawOpts
   -- A session can only be resumed under the same client ID, so a
   -- persistent one needs it set (as the URI fragment).
   when (maybe False (> 0) (coSessionExpiryInterval opts) && null (drop 1 (uriFragment url))) $
     fail ("conn " <> show n <> " has a session expiry but no client ID (e.g. " <> show (show url <> "#" <> unpack n) <> ")")
-  pure $ Map.insert n (Conn n ot url opts) m
+  pure $ Map.insert n (Conn n url opts) m
 
   where
     src = do
       w <- lexeme "conn" *> lexeme word
-      -- Ordered by default, since MQTT requires messages on a topic to be
-      -- delivered in order [5.0 §4.6].
-      ot <- option Ordered (try (lexeme "ordered" $> Ordered) <|> try (lexeme "unordered" $> Unordered))
       when (w `Map.member` m) $ fail ("duplicate conn: " <> show w)
       ustr <- some (noneOf ['\n', ' '])
       u <- maybe (fail ("invalid URI: " <> show ustr)) pure (parseURI ustr)
-      pure (w, ot, u)
+      pure (w, u)
 
     stuff = choice [
       numericOption "session-expiry-interval" (between' 0 4294967295) (\v -> mempty{coSessionExpiryInterval=Just v}),
@@ -120,7 +124,8 @@ parseConn m = do
       numericOption "maximum-packet-size" (between' 1 4294967295) (\v -> mempty{coMaximumPacketSize=Just v}),
       numericOption "receive-maximum" (between' 1 65535) (\v -> mempty{coReceiveMaximum=Just v}),
       numericOption "protocol" (`elem` [3, 5]) (\v -> mempty{coProtocol=Just v}),
-      statPrefixOption
+      statPrefixOption,
+      orderTypeOption
       ]
 
 numericOption :: Text -> (Int -> Bool) -> (Int -> ConnOptions) -> Parser ConnOptions
@@ -136,6 +141,12 @@ statPrefixOption = do
   p <- maybe (fail ("invalid stat-prefix: " <> show pstr)) pure (mkTopic (pack pstr))
   pure mempty{coStatPrefix=Just p}
 
+orderTypeOption :: Parser ConnOptions
+orderTypeOption = do
+  _ <- lexeme "ordering" <* lexeme "="
+  ot <- try (lexeme "ordered" $> Ordered) <|> try (lexeme "unordered" $> Unordered)
+  pure mempty{coOrdering=Just ot}
+
 between' :: Int -> Int -> Int -> Bool
 between' lo hi v = v >= lo && v <= hi
 
@@ -143,7 +154,7 @@ between' lo hi v = v >= lo && v <= hi
 confWarnings :: BridgeConf -> [Text]
 confWarnings (BridgeConf conns sinks) = concatMap connWarnings (Map.elems conns) <> echoes <> unretained
   where
-    is311 n = maybe False (\(Conn _ _ _ o) -> coProtocol o == Just 3) (Map.lookup n conns)
+    is311 n = maybe False (\(Conn _ _ o) -> coProtocol o == Just 3) (Map.lookup n conns)
     filtersAt n = [f | Sink s ds <- sinks, s == n, Dest f _ _ <- ds]
     -- 3.1.1 has no No Local, so a 3.1.1 conn sends the bridge back what
     -- it forwards there, if it's also syncing an overlapping filter
@@ -163,7 +174,7 @@ filtersOverlap :: Filter -> Filter -> Bool
 filtersOverlap a b = case (levels a, levels b) of
   -- A wildcard at the start doesn't match a $ topic [MQTT-4.7.2-1].
   (x:_, y:_) | dollarVsWild x y || dollarVsWild y x -> False
-  (xs, ys) -> go xs ys
+  (xs, ys)                                          -> go xs ys
   where
     levels = T.splitOn "/" . unFilter
     dollarVsWild x y = "$" `T.isPrefixOf` x && y `elem` ["+", "#"]
@@ -179,7 +190,7 @@ filterCovers :: Filter -> Filter -> Bool
 filterCovers a b = case (levels a, levels b) of
   -- A wildcard at the start doesn't match a $ topic [MQTT-4.7.2-1].
   (x:_, y:_) | x `elem` ["+", "#"] && "$" `T.isPrefixOf` y -> False
-  (xs, ys) -> go xs ys
+  (xs, ys)                                                 -> go xs ys
   where
     levels = T.splitOn "/" . unFilter
     go ["#"] _            = True
@@ -190,7 +201,7 @@ filterCovers a b = case (levels a, levels b) of
 
 -- | Things worth warning about in a conn's settings.
 connWarnings :: Conn -> [Text]
-connWarnings (Conn n _ _ opts) =
+connWarnings (Conn n _ opts) =
   [ "conn " <> n <> " uses the default maximum-packet-size of 65536; the broker drops bigger messages for it without saying so"
   | coMaximumPacketSize opts == Nothing ]
 

@@ -8,21 +8,26 @@
 module Main where
 
 import           Control.Concurrent       (threadDelay)
-import           Control.Concurrent.STM   (atomically, modifyTVar', newTVarIO, readTVarIO, writeTVar)
+import           Control.Concurrent.STM   (atomically, modifyTVar', newTVarIO,
+                                           readTVarIO, writeTVar)
 import           Control.Monad            (forever)
 import           Control.Monad.IO.Class   (MonadIO (..))
 import           Control.Monad.IO.Unlift  (withRunInIO)
-import           Control.Monad.Logger     (LogLevel (..), filterLogger, runStderrLoggingT)
+import           Control.Monad.Logger     (LogLevel (..), filterLogger,
+                                           runStderrLoggingT)
 import           Control.Monad.Reader     (runReaderT)
 import qualified Data.ByteString          as BS
 import qualified Data.Map.Strict          as Map
 import           Network.MQTT.Client
 import           Network.MQTT.Types       (ConnACKFlags (..))
-import           Options.Applicative      (Parser, auto, execParser, fullDesc, help, helper, info, long, option,
-                                           progDesc, short, showDefault, strOption, switch, value, (<**>))
+import           Options.Applicative      (Parser, auto, execParser, fullDesc,
+                                           help, helper, info, long, option,
+                                           progDesc, short, showDefault,
+                                           strOption, switch, value, (<**>))
 import qualified System.Remote.Monitoring as RM
 import           UnliftIO.Async           (mapConcurrently, mapConcurrently_)
-import           UnliftIO.Exception       (SomeAsyncException (..), finally, fromException, throwIO, tryAny)
+import           UnliftIO.Exception       (SomeAsyncException (..), finally,
+                                           fromException, throwIO, tryAny)
 
 import           Bridge
 import           BridgeConf
@@ -55,7 +60,7 @@ run Options{..} = runStderrLoggingT . logfilt $ do
   mapM_ (logAt LevelWarn) (confWarnings fullConf)
   cmtv <- liftIO $ newTVarIO mempty
   liveClients <- liftIO $ newTVarIO mempty
-  let prefixes = Map.mapMaybe (\(Conn _ _ _ o) -> coStatPrefix o) conns
+  let prefixes = Map.mapMaybe (\(Conn _ _ o) -> coStatPrefix o) conns
       env = Env cmtv (Map.fromList $ map (\(Sink n d) -> (n,d)) sinks) mets prefixes ss
       session = finally runSession cleanup
       runSession = do
@@ -71,10 +76,10 @@ run Options{..} = runStderrLoggingT . logfilt $ do
         clients <- liftIO $ readTVarIO liveClients
         liftIO $ mapM_ stopClient (Map.elems clients)
         liftIO . atomically $ writeTVar cmtv mempty *> writeTVar liveClients mempty
-      connect (Conn n ot u o) = do
+      connect (Conn n u o) = do
         logInfo $ mconcat ["Connecting to ", lstr u, " with ", lstr o]
         mc <- withRunInIO $ \unl -> do
-          mc <- connectMQTT ot u o (copyMsg n unl)
+          mc <- connectMQTT (ordering o) u o (copyMsg n unl)
           (ConnACKFlags sp _ props) <- connACK mc
           unl . logInfo $ mconcat ["Connected to ", lstr u, " ", lstr sp,  " - server properties: ", lstr props]
           pure mc
